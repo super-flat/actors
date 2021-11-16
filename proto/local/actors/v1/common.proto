@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package superflat.actors.v1;
+
+option go_package = "actors/v1;actorsv1";
+
+import "google/protobuf/any.proto";
+
+message Command {
+    string actor_id = 1;
+    google.protobuf.Any message = 2;
+}
