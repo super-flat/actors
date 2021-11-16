@@ -28,6 +28,7 @@ func sendMessages(nd *NodeDispatcher, sender string) {
 			ActorId: "actor-1",
 			Message: msgAny,
 		}
+		fmt.Printf("(%s) sending msg to actor_id=%s, msg=%s\n", sender, cmd.GetActorId(), msg.GetValue())
 		response, err := nd.Send(context.Background(), cmd)
 		if err != nil {
 			fmt.Printf("send failed, counter=%d, err=%s\n", counter, err.Error())
@@ -40,6 +41,6 @@ func sendMessages(nd *NodeDispatcher, sender string) {
 		}
 
 		counter += 1
-		time.Sleep(time.Second)
+		time.Sleep(time.Second * 30)
 	}
 }

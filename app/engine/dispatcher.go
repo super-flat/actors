@@ -21,8 +21,9 @@ type NodeDispatcher struct {
 func NewNodeDispatcher() *NodeDispatcher {
 	// number of messages this node can dispatch at the same time
 	bufferSize := 100
-	// create actor cache
+	// create actor cache that shuts down actors on eviction
 	actorCache := cache.New(time.Second*5, time.Second*15)
+	actorCache.OnEvicted(evictActor)
 	// reply cache
 	replyTimeout := time.Minute * 1
 	replyCache := cache.New(replyTimeout, replyTimeout*2)
@@ -69,7 +70,7 @@ func (x *NodeDispatcher) process() {
 		value, exists := x.actors.Get(msg.GetActorId())
 		if !exists {
 			actor = NewActor(msg.GetActorId())
-			fmt.Printf("creating actor, id=%s\n", actor.ID)
+			fmt.Printf("(dispatcher) creating actor, id=%s\n", actor.ID)
 		} else {
 			actor, _ = value.(*Actor)
 		}
@@ -77,7 +78,7 @@ func (x *NodeDispatcher) process() {
 		if val, ok := x.replies.Get(msg.GetMessageId()); ok {
 			replyChan, _ = val.(chan *actorsv1.Response)
 		}
-		actor.Send(msg, replyChan)
+		actor.AddToMailbox(msg, replyChan)
 		// re-write the actor into cache so it resets the expiry
 		x.actors.SetDefault(actor.ID, actor)
 	}
@@ -86,8 +87,16 @@ func (x *NodeDispatcher) process() {
 func (x *NodeDispatcher) AwaitTermination() {
 	for {
 		if x.isReceiving {
-			fmt.Println("running...")
+			// fmt.Println("running...")
 			time.Sleep(time.Second * 3)
 		}
+	}
+}
+
+func evictActor(actorID string, actor interface{}) {
+	typedActor, ok := actor.(*Actor)
+	if ok {
+		typedActor.Stop()
+		fmt.Printf("(dispatcher) passivating actor, id='%s'\n", typedActor.ID)
 	}
 }
