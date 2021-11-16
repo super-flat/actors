@@ -48,6 +48,7 @@ func (x *NodeDispatcher) Send(ctx context.Context, msg *actorsv1.Command) (*acto
 	// put message into queue
 	x.msgQueue <- msg
 	// try to read response form reply channel
+	// TODO: implement a timeout here
 	resp := <-replyChan
 	// clean up reply channel
 	x.replies.Delete(msg.GetMessageId())
