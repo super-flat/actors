@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/super-flat/actors/app/engine"
+	"github.com/super-flat/actors/engine"
 )
 
 func init() {

@@ -11,14 +11,14 @@ import (
 )
 
 func Sample() {
-	nd := NewNodeDispatcher()
+	nd := NewActorDispatcher()
 	nd.Start()
 	go sendMessages(nd, "sender-1")
 	go sendMessages(nd, "sender-2")
 	nd.AwaitTermination()
 }
 
-func sendMessages(nd *NodeDispatcher, sender string) {
+func sendMessages(nd *ActorDispatcher, sender string) {
 	counter := 0
 
 	for {

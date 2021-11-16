@@ -10,5 +10,5 @@ earthly +protogen
 go mod vendor
 
 # run
-go run ./app run
+go run ./sample run
 ```

@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// Actor has a mailbox and can process messages one at a time
 type Actor struct {
 	ID       string
 	mailbox  chan *mailboxMessage
@@ -16,6 +17,7 @@ type Actor struct {
 	stop     chan bool
 }
 
+// NewActor returns a new actor
 func NewActor(ID string) *Actor {
 	mailboxSize := 100
 	a := &Actor{
@@ -27,6 +29,8 @@ func NewActor(ID string) *Actor {
 	return a
 }
 
+// AddToMailbox adds a message to the actors mailbox to be processed and
+// supplies an optional reply channel for responses to the sender
 func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Response) error {
 	wrapped := &mailboxMessage{
 		msg:     msg,
@@ -36,6 +40,7 @@ func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Respo
 	return nil
 }
 
+// process runs in the background and processes all messages in the mailbox
 func (x *Actor) process() {
 	for {
 		select {
@@ -63,11 +68,13 @@ func (x *Actor) process() {
 	}
 }
 
+// Stop the actor
 func (x *Actor) Stop() {
 	fmt.Printf("(%s) shutting down\n", x.ID)
 	x.stop <- true
 }
 
+// mailboxMessage wraps messaegs with the reply-to channel
 type mailboxMessage struct {
 	msg     *actorsv1.Command
 	replyTo chan<- *actorsv1.Response
