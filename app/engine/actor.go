@@ -27,7 +27,7 @@ func NewActor(ID string) *Actor {
 	return a
 }
 
-func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan *actorsv1.Response) error {
+func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Response) error {
 	wrapped := &mailboxMessage{
 		msg:     msg,
 		replyTo: reply,
@@ -64,10 +64,11 @@ func (x *Actor) process() {
 }
 
 func (x *Actor) Stop() {
+	fmt.Printf("(%s) shutting down", x.ID)
 	x.stop <- true
 }
 
 type mailboxMessage struct {
 	msg     *actorsv1.Command
-	replyTo chan *actorsv1.Response
+	replyTo chan<- *actorsv1.Response
 }
