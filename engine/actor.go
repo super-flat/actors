@@ -12,9 +12,9 @@ import (
 type Actor struct {
 	ID       string
 	mailbox  chan *mailboxMessage
-	state    *anypb.Any
 	msgCount int
 	stop     chan bool
+	// state    *anypb.Any
 }
 
 // NewActor returns a new actor
