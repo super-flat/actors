@@ -22,7 +22,7 @@ func NewNodeDispatcher() *NodeDispatcher {
 	// number of messages this node can dispatch at the same time
 	bufferSize := 100
 	// create actor cache that shuts down actors on eviction
-	actorCache := cache.New(time.Second*5, time.Second*15)
+	actorCache := cache.New(time.Second*3, time.Second*7)
 	actorCache.OnEvicted(evictActor)
 	// reply cache
 	replyTimeout := time.Minute * 1
@@ -96,7 +96,7 @@ func (x *NodeDispatcher) AwaitTermination() {
 func evictActor(actorID string, actor interface{}) {
 	typedActor, ok := actor.(*Actor)
 	if ok {
-		typedActor.Stop()
 		fmt.Printf("(dispatcher) passivating actor, id='%s'\n", typedActor.ID)
+		typedActor.Stop()
 	}
 }

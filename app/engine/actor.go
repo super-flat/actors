@@ -64,7 +64,7 @@ func (x *Actor) process() {
 }
 
 func (x *Actor) Stop() {
-	fmt.Printf("(%s) shutting down", x.ID)
+	fmt.Printf("(%s) shutting down\n", x.ID)
 	x.stop <- true
 }
 

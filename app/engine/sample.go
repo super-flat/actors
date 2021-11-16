@@ -41,6 +41,6 @@ func sendMessages(nd *NodeDispatcher, sender string) {
 		}
 
 		counter += 1
-		time.Sleep(time.Second * 30)
+		time.Sleep(time.Second * 10)
 	}
 }
