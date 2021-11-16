@@ -3,9 +3,11 @@ module github.com/super-flat/actors
 go 1.17
 
 require (
+	github.com/google/uuid v1.3.0
 	github.com/joho/godotenv v1.4.0
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/spf13/cobra v1.2.1
-	google.golang.org/protobuf v1.26.0
+	google.golang.org/protobuf v1.27.1
 )
 
 require (

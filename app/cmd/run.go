@@ -1,9 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
+	"github.com/super-flat/actors/app/engine"
 )
 
 func init() {
@@ -13,6 +12,6 @@ func init() {
 var runCMD = &cobra.Command{
 	Use: "run",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("run")
+		engine.Sample()
 	},
 }
