@@ -13,9 +13,8 @@ import (
 
 // ActorDispatcher directly manages actors and dispatches messages to them
 type ActorDispatcher struct {
-	msgQueue    chan *actorsv1.Command
+	msgQueue    chan *dispatcherMessage
 	isReceiving bool
-	replies     *cache.Cache
 	actors      *cache.Cache
 }
 
@@ -26,15 +25,11 @@ func NewActorDispatcher() *ActorDispatcher {
 	// create actor cache that shuts down actors on eviction
 	actorCache := cache.New(time.Second*3, time.Second*7)
 	actorCache.OnEvicted(evictActor)
-	// reply cache
-	replyTimeout := time.Minute * 1
-	replyCache := cache.New(replyTimeout, replyTimeout*2)
 	// create the dispatcher
 	return &ActorDispatcher{
-		msgQueue:    make(chan *actorsv1.Command, bufferSize),
+		msgQueue:    make(chan *dispatcherMessage, bufferSize),
 		isReceiving: false,
 		actors:      actorCache,
-		replies:     replyCache,
 	}
 }
 
@@ -47,14 +42,13 @@ func (x *ActorDispatcher) Send(ctx context.Context, msg *actorsv1.Command) (*act
 	msg.MessageId = uuid.NewString()
 	// create reply channel
 	replyChan := make(chan *actorsv1.Response, 1)
-	x.replies.SetDefault(msg.GetMessageId(), replyChan)
+	// wrap the message
+	wrapped := &dispatcherMessage{msg: msg, replyTo: replyChan}
 	// put message into queue
-	x.msgQueue <- msg
+	x.msgQueue <- wrapped
 	// try to read response form reply channel
 	// TODO: implement a timeout here
 	resp := <-replyChan
-	// clean up reply channel
-	x.replies.Delete(msg.GetMessageId())
 	return resp, nil
 }
 
@@ -74,18 +68,14 @@ func (x *ActorDispatcher) process() {
 		msg := <-x.msgQueue
 		// get or create the actor from cache
 		var actor *Actor
-		value, exists := x.actors.Get(msg.GetActorId())
-		if !exists {
-			actor = NewActor(msg.GetActorId())
-			fmt.Printf("(dispatcher) creating actor, id=%s\n", actor.ID)
-		} else {
+		value, exists := x.actors.Get(msg.msg.GetActorId())
+		if exists {
 			actor, _ = value.(*Actor)
+		} else {
+			actor = NewActor(msg.msg.GetActorId())
+			fmt.Printf("(dispatcher) creating actor, id=%s\n", actor.ID)
 		}
-		var replyChan chan *actorsv1.Response
-		if val, ok := x.replies.Get(msg.GetMessageId()); ok {
-			replyChan, _ = val.(chan *actorsv1.Response)
-		}
-		actor.AddToMailbox(msg, replyChan)
+		actor.AddToMailbox(msg.msg, msg.replyTo)
 		// re-write the actor into cache so it resets the expiry
 		x.actors.SetDefault(actor.ID, actor)
 	}
@@ -109,4 +99,9 @@ func evictActor(actorID string, actor interface{}) {
 		fmt.Printf("(dispatcher) passivating actor, id='%s'\n", typedActor.ID)
 		typedActor.Stop()
 	}
+}
+
+type dispatcherMessage struct {
+	msg     *actorsv1.Command
+	replyTo chan *actorsv1.Response
 }
