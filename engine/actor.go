@@ -44,21 +44,25 @@ func (x *Actor) IdleTime() time.Duration {
 
 // AddToMailbox adds a message to the actors mailbox to be processed and
 // supplies an optional reply channel for responses to the sender
-func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Response) (success bool) {
+func (x *Actor) AddToMailbox(msg *actorsv1.Command) (success bool, replyChan <-chan *actorsv1.Response) {
 	// acquire a lock
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	// process
 	if !x.acceptingMessages {
-		return false
+		return false, nil
 	}
+	// set update time for activity
+	x.lastUpdated = time.Now()
+	// create message
+	replyTo := make(chan *actorsv1.Response, 1)
 	wrapped := &mailboxMessage{
 		msg:     msg,
-		replyTo: reply,
+		replyTo: replyTo,
 	}
 	// if successfully push to channel, return true, else false
 	x.mailbox <- wrapped
-	return true
+	return true, replyTo
 }
 
 // Stop the actor
@@ -86,7 +90,6 @@ func (x *Actor) process() {
 		case <-x.stop:
 			return
 		case wrapper := <-x.mailbox:
-			x.lastUpdated = time.Now()
 			// run handler
 			response, err := handleMessage(wrapper.msg)
 			if err != nil {

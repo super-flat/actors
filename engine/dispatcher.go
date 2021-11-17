@@ -11,11 +11,18 @@ import (
 	actorsv1 "github.com/super-flat/actors/gen/actors/v1"
 )
 
+type actorRequest struct {
+	actorID string
+	replyTo chan<- *Actor
+}
+
 // ActorDispatcher directly manages actors and dispatches messages to them
 type ActorDispatcher struct {
-	msgQueue    chan *dispatcherMessage
-	isReceiving bool
-	actors      *cache.Cache
+	isReceiving          bool
+	actors               *cache.Cache
+	actorRequests        chan *actorRequest
+	maxActorInactivity   time.Duration
+	passivationFrequence time.Duration
 }
 
 // NewActorDispatcher returns a new ActorDispatcher
@@ -26,9 +33,11 @@ func NewActorDispatcher() *ActorDispatcher {
 	actorCache := cache.New(time.Millisecond*-1, time.Millisecond*-1)
 	// create the dispatcher
 	return &ActorDispatcher{
-		msgQueue:    make(chan *dispatcherMessage, bufferSize),
-		isReceiving: false,
-		actors:      actorCache,
+		isReceiving:          false,
+		actors:               actorCache,
+		actorRequests:        make(chan *actorRequest, bufferSize),
+		maxActorInactivity:   time.Second * 5,
+		passivationFrequence: time.Second * 5,
 	}
 }
 
@@ -39,16 +48,23 @@ func (x *ActorDispatcher) Send(ctx context.Context, msg *actorsv1.Command) (*act
 	}
 	// set a unique message id
 	msg.MessageId = uuid.NewString()
-	// create reply channel
-	replyChan := make(chan *actorsv1.Response, 1)
-	// wrap the message
-	wrapped := &dispatcherMessage{msg: msg, replyTo: replyChan}
-	// put message into queue
-	x.msgQueue <- wrapped
-	// try to read response form reply channel
-	// TODO: implement a timeout here
-	resp := <-replyChan
-	return resp, nil
+	for {
+		// get the actor ref
+		actor := x.getActor(msg.ActorId)
+		// send the message, get the reply channel
+		success, replyChan := actor.AddToMailbox(msg)
+		if !success {
+			continue
+		}
+		// try to get response up to a timeout
+		select {
+		case resp := <-replyChan:
+			return resp, nil
+		case <-time.After(time.Second * 5):
+			return nil, errors.New("timeout")
+		}
+	}
+
 }
 
 // Start the ActorDispatcher
@@ -56,57 +72,49 @@ func (x *ActorDispatcher) Start() {
 	if x.isReceiving {
 		return
 	}
-	go x.process()
-	go x.passivate()
+	go x.actorLoop()
+	go x.passivateLoop()
 	x.isReceiving = true
 }
 
-// process runs in the background listening for new messages, creates actors
-// if needed, and adds messages to that actors mailbox
-func (x *ActorDispatcher) process() {
+// getActor gets or creates an actor in a thread-safe manner
+func (x *ActorDispatcher) getActor(actorID string) *Actor {
+	actorChan := make(chan *Actor)
+	r := &actorRequest{actorID: actorID, replyTo: actorChan}
+	x.actorRequests <- r
+	actor := <-actorChan
+	return actor
+}
+
+// actorLoop runs in a goroutine to create actors one at a time
+func (x *ActorDispatcher) actorLoop() {
 	for {
-		msg := <-x.msgQueue
+		req := <-x.actorRequests
 		// get or create the actor from cache
 		var actor *Actor
-		value, exists := x.actors.Get(msg.msg.GetActorId())
+		value, exists := x.actors.Get(req.actorID)
 		if exists {
 			actor, _ = value.(*Actor)
 		} else {
-			actor = NewActor(msg.msg.GetActorId())
+			actor = NewActor(req.actorID)
 			x.actors.SetDefault(actor.ID, actor)
 		}
-		// attempt to add to mailbox
-		success := actor.AddToMailbox(msg.msg, msg.replyTo)
-		// if not success, try to add back to queue
-		if !success {
-			select {
-			case x.msgQueue <- msg:
-				continue
-			default:
-				// TODO: inform sender this failed!
-				// msg.replyTo <- SOME ERROR
-				fmt.Printf("(dispatcher) could not process message")
-			}
-		}
+		req.replyTo <- actor
 	}
 }
 
 // AwaitTermination blocks unil the dispatcher is ready to shut down
 func (x *ActorDispatcher) AwaitTermination() {
-	for {
-		if x.isReceiving {
-			time.Sleep(time.Second * 3)
-		}
+	for x.isReceiving {
+		time.Sleep(time.Millisecond * 100)
 	}
 }
 
-func (x *ActorDispatcher) passivate() {
-	// TODO: move to a configuration
-	maxInactivity := time.Second * 4
-
+// passivateLoop runs in a goroutine and inactive actors
+func (x *ActorDispatcher) passivateLoop() {
 	for {
 		// TODO: make this configurable
-		time.Sleep(time.Second * 5)
+		time.Sleep(x.passivationFrequence)
 		// if there are items, start passivating
 		if x.isReceiving && x.actors.ItemCount() > 0 {
 			// loop over actors
@@ -117,7 +125,7 @@ func (x *ActorDispatcher) passivate() {
 					continue
 				}
 				idleTime := actor.IdleTime()
-				if actor.IdleTime() > maxInactivity {
+				if actor.IdleTime() >= x.maxActorInactivity {
 					fmt.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
 					actor.Stop()
 					x.actors.Delete(actor.ID)
@@ -127,9 +135,4 @@ func (x *ActorDispatcher) passivate() {
 		}
 
 	}
-}
-
-type dispatcherMessage struct {
-	msg     *actorsv1.Command
-	replyTo chan *actorsv1.Response
 }
