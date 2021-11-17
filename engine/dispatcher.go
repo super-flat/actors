@@ -73,10 +73,21 @@ func (x *ActorDispatcher) process() {
 			actor, _ = value.(*Actor)
 		} else {
 			actor = NewActor(msg.msg.GetActorId())
+			x.actors.SetDefault(actor.ID, actor)
 		}
-		actor.AddToMailbox(msg.msg, msg.replyTo)
-		// re-write the actor into cache so it resets the expiry
-		x.actors.SetDefault(actor.ID, actor)
+		// attempt to add to mailbox
+		success := actor.AddToMailbox(msg.msg, msg.replyTo)
+		// if not success, try to add back to queue
+		if !success {
+			select {
+			case x.msgQueue <- msg:
+				continue
+			default:
+				// TODO: inform sender this failed!
+				// msg.replyTo <- SOME ERROR
+				fmt.Printf("(dispatcher) could not process message")
+			}
+		}
 	}
 }
 
@@ -99,8 +110,6 @@ func (x *ActorDispatcher) passivate() {
 		time.Sleep(time.Second * 5)
 		// if there are items, start passivating
 		if x.isReceiving && x.actors.ItemCount() > 0 {
-			// fmt.Printf("(dispatcher) checking %d actors for inactivity\n", x.actors.ItemCount())
-			stopping := []*Actor{}
 			// loop over actors
 			for actorID, actorIface := range x.actors.Items() {
 				actor, ok := actorIface.Object.(*Actor)
@@ -111,20 +120,12 @@ func (x *ActorDispatcher) passivate() {
 				idleTime := actor.IdleTime()
 				if actor.IdleTime() > maxInactivity {
 					fmt.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
-					actor.Stop()
-					stopping = append(stopping, actor)
-				}
-
-			}
-			for _, actor := range stopping {
-				for {
-					if !actor.acceptingMessages {
+					if actor.Stop(false) {
 						x.actors.Delete(actor.ID)
+						fmt.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 						// TODO: dump any remaining messages back into queue
-						break
 					}
 				}
-				fmt.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 			}
 		}
 

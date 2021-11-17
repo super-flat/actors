@@ -28,7 +28,7 @@ func Sample() {
 	nd.Start()
 	go sendMessages(nd, "sender-1", "actor-1", time.Second*20)
 	go sendMessages(nd, "sender-2", "actor-1", time.Second*15)
-	go sendMessages(nd, "sender-3", "actor-2", time.Second*10)
+	go sendMessages(nd, "sender-3", "actor-2", time.Second*3)
 	nd.AwaitTermination()
 }
 

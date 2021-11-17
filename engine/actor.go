@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -16,8 +15,10 @@ type Actor struct {
 	mailbox           chan *mailboxMessage
 	msgCount          int
 	stop              chan bool
+	passivate         chan bool
 	lastUpdated       time.Time
 	acceptingMessages bool
+	shutdownSuccess   chan bool
 	// state    *anypb.Any
 }
 
@@ -28,6 +29,8 @@ func NewActor(ID string) *Actor {
 		ID:                ID,
 		mailbox:           make(chan *mailboxMessage, mailboxSize),
 		stop:              make(chan bool, 1),
+		passivate:         make(chan bool, 1),
+		shutdownSuccess:   make(chan bool, 1),
 		lastUpdated:       time.Now(),
 		acceptingMessages: true,
 	}
@@ -43,31 +46,38 @@ func (x Actor) IdleTime() time.Duration {
 
 // AddToMailbox adds a message to the actors mailbox to be processed and
 // supplies an optional reply channel for responses to the sender
-func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Response) error {
+func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Response) (success bool) {
 	if !x.acceptingMessages {
-		return errors.New("actor shutting down")
+		return false
 	}
 	wrapped := &mailboxMessage{
 		msg:     msg,
 		replyTo: reply,
 	}
+	// if successfully push to channel, return true, else false
 	x.mailbox <- wrapped
-	return nil
+	return true
 }
 
 // Stop the actor
-func (x *Actor) Stop() {
+func (x *Actor) Stop(force bool) (success bool) {
 	fmt.Printf("(%s) shutting down\n", x.ID)
-	x.stop <- true
+	x.stop <- force
+	return <-x.shutdownSuccess
 }
 
 // process runs in the background and processes all messages in the mailbox
 func (x *Actor) process() {
 	for {
 		select {
-		case <-x.stop:
-			x.acceptingMessages = false
-			return
+		case force := <-x.stop:
+			if force || len(x.mailbox) == 0 {
+				x.acceptingMessages = false
+				x.shutdownSuccess <- true
+				return
+			} else {
+				x.shutdownSuccess <- false
+			}
 		case wrapper := <-x.mailbox:
 			x.lastUpdated = time.Now()
 			// run handler
@@ -79,7 +89,6 @@ func (x *Actor) process() {
 					wrapper.replyTo <- response
 				}
 			}
-
 			x.msgCount += 1
 		}
 	}
