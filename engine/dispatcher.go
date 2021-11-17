@@ -22,9 +22,8 @@ type ActorDispatcher struct {
 func NewActorDispatcher() *ActorDispatcher {
 	// number of messages this node can dispatch at the same time
 	bufferSize := 100
-	// create actor cache that shuts down actors on eviction
-	actorCache := cache.New(time.Second*3, time.Second*7)
-	actorCache.OnEvicted(evictActor)
+	// create actor data store
+	actorCache := cache.New(time.Millisecond*-1, time.Millisecond*-1)
 	// create the dispatcher
 	return &ActorDispatcher{
 		msgQueue:    make(chan *dispatcherMessage, bufferSize),
@@ -58,6 +57,7 @@ func (x *ActorDispatcher) Start() {
 		return
 	}
 	go x.process()
+	go x.passivate()
 	x.isReceiving = true
 }
 
@@ -73,7 +73,6 @@ func (x *ActorDispatcher) process() {
 			actor, _ = value.(*Actor)
 		} else {
 			actor = NewActor(msg.msg.GetActorId())
-			fmt.Printf("(dispatcher) creating actor, id=%s\n", actor.ID)
 		}
 		actor.AddToMailbox(msg.msg, msg.replyTo)
 		// re-write the actor into cache so it resets the expiry
@@ -91,13 +90,44 @@ func (x *ActorDispatcher) AwaitTermination() {
 	}
 }
 
-// evictActor is used in go-cache to shut down actors when they are evicted
-// from the cache
-func evictActor(actorID string, actor interface{}) {
-	typedActor, ok := actor.(*Actor)
-	if ok {
-		fmt.Printf("(dispatcher) passivating actor, id='%s'\n", typedActor.ID)
-		typedActor.Stop()
+func (x *ActorDispatcher) passivate() {
+	// TODO: move to a configuration
+	maxInactivity := time.Second * 10
+
+	for {
+		// TODO: make this configurable
+		time.Sleep(time.Second * 5)
+		// if there are items, start passivating
+		if x.isReceiving && x.actors.ItemCount() > 0 {
+			// fmt.Printf("(dispatcher) checking %d actors for inactivity\n", x.actors.ItemCount())
+			stopping := []*Actor{}
+			// loop over actors
+			for actorID, actorIface := range x.actors.Items() {
+				actor, ok := actorIface.Object.(*Actor)
+				if !ok {
+					fmt.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
+					continue
+				}
+				idleTime := actor.IdleTime()
+				if actor.IdleTime() > maxInactivity {
+					fmt.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
+					actor.Stop()
+					stopping = append(stopping, actor)
+				}
+
+			}
+			for _, actor := range stopping {
+				for {
+					if !actor.acceptingMessages {
+						x.actors.Delete(actor.ID)
+						// TODO: dump any remaining messages back into queue
+						break
+					}
+				}
+				fmt.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
+			}
+		}
+
 	}
 }
 

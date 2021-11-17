@@ -26,22 +26,23 @@ var runCMD = &cobra.Command{
 func Sample() {
 	nd := engine.NewActorDispatcher()
 	nd.Start()
-	go sendMessages(nd, "sender-1")
-	go sendMessages(nd, "sender-2")
+	go sendMessages(nd, "sender-1", "actor-1", time.Second*20)
+	go sendMessages(nd, "sender-2", "actor-1", time.Second*15)
+	go sendMessages(nd, "sender-3", "actor-2", time.Second*10)
 	nd.AwaitTermination()
 }
 
-func sendMessages(nd *engine.ActorDispatcher, sender string) {
+func sendMessages(nd *engine.ActorDispatcher, senderID string, actorID string, sleepTime time.Duration) {
 	counter := 0
 
 	for {
-		msg := wrapperspb.String(fmt.Sprintf("message %d from %s", counter, sender))
+		msg := wrapperspb.String(fmt.Sprintf("message %d from %s", counter, senderID))
 		msgAny, _ := anypb.New(msg)
 		cmd := &actorsv1.Command{
-			ActorId: "actor-1",
+			ActorId: actorID,
 			Message: msgAny,
 		}
-		fmt.Printf("(%s) sending msg to actor_id=%s, msg=%s\n", sender, cmd.GetActorId(), msg.GetValue())
+		fmt.Printf("(%s) sending msg to actor_id=%s, msg=%s\n", senderID, cmd.GetActorId(), msg.GetValue())
 		response, err := nd.Send(context.Background(), cmd)
 		if err != nil {
 			fmt.Printf("send failed, counter=%d, err=%s\n", counter, err.Error())
@@ -50,10 +51,10 @@ func sendMessages(nd *engine.ActorDispatcher, sender string) {
 		if response != nil {
 			respMsg := &wrapperspb.StringValue{}
 			_ = response.GetMessage().UnmarshalTo(respMsg)
-			fmt.Printf("(%s) received actor_id=%s, msg=%s\n", sender, response.GetActorId(), respMsg.GetValue())
+			fmt.Printf("(%s) received actor_id=%s, msg=%s\n", senderID, response.GetActorId(), respMsg.GetValue())
 		}
 
 		counter += 1
-		time.Sleep(time.Second * 10)
+		time.Sleep(sleepTime)
 	}
 }
