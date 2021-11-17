@@ -103,7 +103,7 @@ func (x *ActorDispatcher) AwaitTermination() {
 
 func (x *ActorDispatcher) passivate() {
 	// TODO: move to a configuration
-	maxInactivity := time.Second * 10
+	maxInactivity := time.Second * 4
 
 	for {
 		// TODO: make this configurable
@@ -120,11 +120,9 @@ func (x *ActorDispatcher) passivate() {
 				idleTime := actor.IdleTime()
 				if actor.IdleTime() > maxInactivity {
 					fmt.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
-					if actor.Stop(false) {
-						x.actors.Delete(actor.ID)
-						fmt.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
-						// TODO: dump any remaining messages back into queue
-					}
+					actor.Stop()
+					x.actors.Delete(actor.ID)
+					fmt.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 				}
 			}
 		}
