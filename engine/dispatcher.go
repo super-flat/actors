@@ -95,7 +95,6 @@ func (x *ActorDispatcher) process() {
 func (x *ActorDispatcher) AwaitTermination() {
 	for {
 		if x.isReceiving {
-			// fmt.Println("running...")
 			time.Sleep(time.Second * 3)
 		}
 	}

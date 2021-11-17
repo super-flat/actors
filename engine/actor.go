@@ -65,9 +65,10 @@ func (x *Actor) AddToMailbox(msg *actorsv1.Command, reply chan<- *actorsv1.Respo
 func (x *Actor) Stop() {
 	// acquire a lock
 	x.mtx.Lock()
-	defer x.mtx.Unlock()
 	// stop future messages
 	x.acceptingMessages = false
+	// unlock
+	x.mtx.Unlock()
 	// wait for no more messages
 	for len(x.mailbox) != 0 {
 		fmt.Printf("waiting for mailbox empty, len=%d\n", len(x.mailbox))
