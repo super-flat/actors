@@ -11,13 +11,10 @@ type Actor interface {
 	Receive(ctx context.Context, msg *ActorMessage) error
 }
 
-// ActorFactory returns an actor
-type ActorFactory interface {
-	CreateActor(actorID string) Actor
-}
-
 // ActorMessage wraps a message with a reply channel
 type ActorMessage struct {
 	Payload *actorsv1.Command
 	ReplyTo chan<- *actorsv1.Response
 }
+
+type ActorFactory func(actorID string) Actor

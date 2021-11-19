@@ -24,7 +24,7 @@ type ActorMailbox struct {
 // NewActorMailbox returns a new actor
 func NewActorMailbox(ID string, actorFactory ActorFactory) *ActorMailbox {
 	mailboxSize := 10
-	actor := actorFactory.CreateActor(ID)
+	actor := actorFactory(ID)
 	mailbox := &ActorMailbox{
 		ID:                ID,
 		mailbox:           make(chan *ActorMessage, mailboxSize),

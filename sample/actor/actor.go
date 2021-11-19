@@ -15,6 +15,11 @@ type SampleActor struct {
 	ID string
 }
 
+// NewSampleActor creates a new SampleActor
+func NewSampleActor(actorID string) *SampleActor {
+	return &SampleActor{ID: actorID}
+}
+
 // Receive handles new messages
 func (x SampleActor) Receive(ctx context.Context, msg *engine.ActorMessage) error {
 	msgString := &wrapperspb.StringValue{}

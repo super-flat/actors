@@ -25,7 +25,10 @@ var runCMD = &cobra.Command{
 }
 
 func Sample() {
-	actorFactory := actor.NewSampleActorFactory()
+	actorFactory := func(actorID string) engine.Actor {
+		return actor.NewSampleActor(actorID)
+	}
+
 	nd := engine.NewActorDispatcher(actorFactory)
 	nd.Start()
 	go sendMessages(nd, "sender-1", "actor-1", time.Second*20)
