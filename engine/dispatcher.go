@@ -13,7 +13,7 @@ import (
 
 type actorRequest struct {
 	actorID string
-	replyTo chan<- *Actor
+	replyTo chan<- *ActorMailbox
 }
 
 // ActorDispatcher directly manages actors and dispatches messages to them
@@ -23,10 +23,11 @@ type ActorDispatcher struct {
 	actorRequests        chan *actorRequest
 	maxActorInactivity   time.Duration
 	passivationFrequence time.Duration
+	actorFactory         ActorFactory
 }
 
 // NewActorDispatcher returns a new ActorDispatcher
-func NewActorDispatcher() *ActorDispatcher {
+func NewActorDispatcher(actorFactory ActorFactory) *ActorDispatcher {
 	// number of messages this node can dispatch at the same time
 	bufferSize := 100
 	// create actor data store
@@ -38,6 +39,7 @@ func NewActorDispatcher() *ActorDispatcher {
 		actorRequests:        make(chan *actorRequest, bufferSize),
 		maxActorInactivity:   time.Second * 5,
 		passivationFrequence: time.Second * 5,
+		actorFactory:         actorFactory,
 	}
 }
 
@@ -64,7 +66,6 @@ func (x *ActorDispatcher) Send(ctx context.Context, msg *actorsv1.Command) (*act
 			return nil, errors.New("timeout")
 		}
 	}
-
 }
 
 // Start the ActorDispatcher
@@ -78,8 +79,8 @@ func (x *ActorDispatcher) Start() {
 }
 
 // getActor gets or creates an actor in a thread-safe manner
-func (x *ActorDispatcher) getActor(actorID string) *Actor {
-	actorChan := make(chan *Actor)
+func (x *ActorDispatcher) getActor(actorID string) *ActorMailbox {
+	actorChan := make(chan *ActorMailbox)
 	r := &actorRequest{actorID: actorID, replyTo: actorChan}
 	x.actorRequests <- r
 	actor := <-actorChan
@@ -91,12 +92,12 @@ func (x *ActorDispatcher) actorLoop() {
 	for {
 		req := <-x.actorRequests
 		// get or create the actor from cache
-		var actor *Actor
+		var actor *ActorMailbox
 		value, exists := x.actors.Get(req.actorID)
 		if exists {
-			actor, _ = value.(*Actor)
+			actor, _ = value.(*ActorMailbox)
 		} else {
-			actor = NewActor(req.actorID)
+			actor = NewActorMailbox(req.actorID, x.actorFactory)
 			x.actors.SetDefault(actor.ID, actor)
 		}
 		req.replyTo <- actor
@@ -119,7 +120,7 @@ func (x *ActorDispatcher) passivateLoop() {
 		if x.isReceiving && x.actors.ItemCount() > 0 {
 			// loop over actors
 			for actorID, actorIface := range x.actors.Items() {
-				actor, ok := actorIface.Object.(*Actor)
+				actor, ok := actorIface.Object.(*ActorMailbox)
 				if !ok {
 					fmt.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
 					continue

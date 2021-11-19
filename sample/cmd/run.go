@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/super-flat/actors/engine"
 	actorsv1 "github.com/super-flat/actors/gen/actors/v1"
+	"github.com/super-flat/actors/sample/actor"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -24,7 +25,8 @@ var runCMD = &cobra.Command{
 }
 
 func Sample() {
-	nd := engine.NewActorDispatcher()
+	actorFactory := actor.NewSampleActorFactory()
+	nd := engine.NewActorDispatcher(actorFactory)
 	nd.Start()
 	go sendMessages(nd, "sender-1", "actor-1", time.Second*20)
 	go sendMessages(nd, "sender-2", "actor-1", time.Second*15)
