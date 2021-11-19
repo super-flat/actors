@@ -17,4 +17,5 @@ type ActorMessage struct {
 	ReplyTo chan<- *actorsv1.Response
 }
 
+// ActorFactory is a function that returns an actor, to be used as a factory
 type ActorFactory func(actorID string) Actor
