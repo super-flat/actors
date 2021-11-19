@@ -16,8 +16,7 @@ type ActorFactory interface {
 	CreateActor(actorID string) Actor
 }
 
-type ActorMaker func(actorID string) Actor
-
+// ActorMessage wraps a message with a reply channel
 type ActorMessage struct {
 	Payload *actorsv1.Command
 	ReplyTo chan<- *actorsv1.Response

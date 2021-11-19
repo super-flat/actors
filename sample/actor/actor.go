@@ -10,10 +10,12 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// SampleActor implements engine.Actor
 type SampleActor struct {
 	ID string
 }
 
+// Receive handles new messages
 func (x SampleActor) Receive(ctx context.Context, msg *engine.ActorMessage) error {
 	msgString := &wrapperspb.StringValue{}
 	if err := msg.Payload.GetMessage().UnmarshalTo(msgString); err != nil {
@@ -32,13 +34,16 @@ func (x SampleActor) Receive(ctx context.Context, msg *engine.ActorMessage) erro
 	}
 }
 
+// SampleActorFactory returns new actors
 type SampleActorFactory struct {
 }
 
-func (x SampleActorFactory) CreateActor(actorID string) engine.Actor {
-	return &SampleActor{ID: actorID}
-}
-
+// NewSampleActorFactory returns a new SampleActorFactory
 func NewSampleActorFactory() *SampleActorFactory {
 	return &SampleActorFactory{}
+}
+
+// CreateActor returns a SampleActor
+func (x SampleActorFactory) CreateActor(actorID string) engine.Actor {
+	return &SampleActor{ID: actorID}
 }
