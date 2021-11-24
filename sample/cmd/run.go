@@ -6,10 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/super-flat/actors/engine"
-	actorsv1 "github.com/super-flat/actors/gen/actors/v1"
+	"github.com/super-flat/actors/actors"
 	"github.com/super-flat/actors/sample/actor"
-	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -25,11 +23,11 @@ var runCMD = &cobra.Command{
 }
 
 func Sample() {
-	actorFactory := func(actorID string) engine.Actor {
+	actorFactory := func(actorID string) actors.Actor {
 		return actor.NewSampleActor(actorID)
 	}
 
-	nd := engine.NewActorDispatcher(actorFactory)
+	nd := actors.NewActorDispatcher(actorFactory)
 	nd.Start()
 	go sendMessages(nd, "sender-1", "actor-1", time.Second*20)
 	go sendMessages(nd, "sender-2", "actor-1", time.Second*15)
@@ -37,26 +35,21 @@ func Sample() {
 	nd.AwaitTermination()
 }
 
-func sendMessages(nd *engine.ActorDispatcher, senderID string, actorID string, sleepTime time.Duration) {
+func sendMessages(nd *actors.Dispatcher, senderID string, actorID string, sleepTime time.Duration) {
 	counter := 0
 
 	for {
 		msg := wrapperspb.String(fmt.Sprintf("message %d from %s", counter, senderID))
-		msgAny, _ := anypb.New(msg)
-		cmd := &actorsv1.Command{
-			ActorId: actorID,
-			Message: msgAny,
-		}
-		fmt.Printf("(%s) sending msg to actor_id=%s, msg=%s\n", senderID, cmd.GetActorId(), msg.GetValue())
-		response, err := nd.Send(context.Background(), cmd)
+		fmt.Printf("(%s) sending msg to actor_id=%s, msg=%s\n", senderID, actorID, msg.GetValue())
+		response, err := nd.Send(context.Background(), actorID, msg)
 		if err != nil {
 			fmt.Printf("send failed, counter=%d, err=%s\n", counter, err.Error())
 		}
 
 		if response != nil {
-			respMsg := &wrapperspb.StringValue{}
-			_ = response.GetMessage().UnmarshalTo(respMsg)
-			fmt.Printf("(%s) received actor_id=%s, msg=%s\n", senderID, response.GetActorId(), respMsg.GetValue())
+			// cast the response to StringValue
+			actualResp := response.(*wrapperspb.StringValue)
+			fmt.Printf("(%s) received actor_id=%s, msg=%s\n", senderID, actorID, actualResp.GetValue())
 		}
 
 		counter += 1

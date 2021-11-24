@@ -10,21 +10,8 @@ install-deps:
 	COPY go.mod go.sum .
 	RUN --ssh go mod download -x
 
-protogen:
-	FROM +install-deps
-	# copy the proto files to generate
-	COPY --dir proto/ ./
-	COPY buf.work.yaml buf.gen.yaml ./
-	RUN ls -la proto/local/actors/v1
-	# generate the pbs
-	RUN buf generate \
-		--template buf.gen.yaml \
-		--path proto/local/actors/v1
-	# save artifact to
-	SAVE ARTIFACT gen gen AS LOCAL gen
-
 add-code:
-	FROM +protogen
+	FROM +install-deps
 	# add code
 	COPY --dir app .
 

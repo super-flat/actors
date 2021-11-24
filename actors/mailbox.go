@@ -1,4 +1,4 @@
-package engine
+package actors
 
 import (
 	"context"
@@ -6,13 +6,21 @@ import (
 	"sync"
 	"time"
 
-	actorsv1 "github.com/super-flat/actors/gen/actors/v1"
+	"google.golang.org/protobuf/proto"
 )
 
-// ActorMailbox has a mailbox and can process messages one at a time
-type ActorMailbox struct {
+// CommandWrapper wraps the actual command sent to the actor and
+// the context
+type CommandWrapper struct {
+	CommandCtx context.Context
+	Command    proto.Message
+	ReplyChan  chan<- proto.Message
+}
+
+// Mailbox has a mailbox and can process messages one at a time
+type Mailbox struct {
 	ID                string
-	mailbox           chan *ActorMessage
+	mailbox           chan *CommandWrapper
 	msgCount          int
 	stop              chan bool
 	lastUpdated       time.Time
@@ -21,13 +29,13 @@ type ActorMailbox struct {
 	actor             Actor
 }
 
-// NewActorMailbox returns a new actor
-func NewActorMailbox(ID string, actorFactory ActorFactory) *ActorMailbox {
+// NewMailbox returns a new actor
+func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
 	mailboxSize := 10
 	actor := actorFactory(ID)
-	mailbox := &ActorMailbox{
+	mailbox := &Mailbox{
 		ID:                ID,
-		mailbox:           make(chan *ActorMessage, mailboxSize),
+		mailbox:           make(chan *CommandWrapper, mailboxSize),
 		stop:              make(chan bool, 1),
 		lastUpdated:       time.Now(),
 		acceptingMessages: true,
@@ -39,13 +47,13 @@ func NewActorMailbox(ID string, actorFactory ActorFactory) *ActorMailbox {
 }
 
 // IdleTime returns how long the actor has been idle as a time.Duration
-func (x *ActorMailbox) IdleTime() time.Duration {
+func (x *Mailbox) IdleTime() time.Duration {
 	return time.Since(x.lastUpdated)
 }
 
-// AddToMailbox adds a message to the actors mailbox to be processed and
+// AddToMailbox adds a message to the actors' mailbox to be processed and
 // supplies an optional reply channel for responses to the sender
-func (x *ActorMailbox) AddToMailbox(msg *actorsv1.Command) (success bool, replyChan <-chan *actorsv1.Response) {
+func (x *Mailbox) AddToMailbox(ctx context.Context, msg proto.Message) (success bool, replyChan <-chan proto.Message) {
 	// acquire a lock
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
@@ -55,19 +63,20 @@ func (x *ActorMailbox) AddToMailbox(msg *actorsv1.Command) (success bool, replyC
 	}
 	// set update time for activity
 	x.lastUpdated = time.Now()
-	// create message
-	replyTo := make(chan *actorsv1.Response, 1)
-	wrapped := &ActorMessage{
-		Payload: msg,
-		ReplyTo: replyTo,
-	}
+	// create the reply chan
+	replyTo := make(chan proto.Message, 1)
 	// if successfully push to channel, return true, else false
-	x.mailbox <- wrapped
+	x.mailbox <- &CommandWrapper{
+		CommandCtx: ctx,
+		Command:    msg,
+		ReplyChan:  replyTo,
+	}
+	// return the response
 	return true, replyTo
 }
 
 // Stop the actor
-func (x *ActorMailbox) Stop() {
+func (x *Mailbox) Stop() {
 	// acquire a lock
 	x.mtx.Lock()
 	// stop future messages
@@ -85,16 +94,16 @@ func (x *ActorMailbox) Stop() {
 }
 
 // process runs in the background and processes all messages in the mailbox
-func (x *ActorMailbox) process() {
+func (x *Mailbox) process() {
 	for {
 		select {
 		case <-x.stop:
 			return
 		case wrapper := <-x.mailbox:
-			// run handler
-			err := x.actor.Receive(context.Background(), wrapper)
+			// let the actor process the command
+			err := x.actor.Receive(wrapper.CommandCtx, wrapper.Command, wrapper.ReplyChan)
 			if err != nil {
-				fmt.Printf("error handling message, id=%s, err=%s\n", wrapper.Payload.MessageId, err.Error())
+				fmt.Printf("error handling message, messageType=%s, err=%s\n", wrapper.Command.ProtoReflect().Descriptor().FullName(), err.Error())
 			}
 			x.msgCount += 1
 		default:
