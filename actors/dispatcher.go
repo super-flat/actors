@@ -2,11 +2,11 @@ package actors
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"log"
 	"time"
 
 	"github.com/patrickmn/go-cache"
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -17,35 +17,45 @@ type actorRequest struct {
 
 // Dispatcher directly manages actors and dispatches messages to them
 type Dispatcher struct {
-	isReceiving          bool
-	actors               *cache.Cache
-	actorRequests        chan *actorRequest
+	isReceiving   bool
+	actors        *cache.Cache
+	actorRequests chan *actorRequest
+
 	maxActorInactivity   time.Duration
 	passivationFrequency time.Duration
-	actorFactory         ActorFactory
+	bufferSize           int
+
+	askTimeout time.Duration
+
+	actorFactory ActorFactory
 }
 
 // NewActorDispatcher returns a new Dispatcher
-func NewActorDispatcher(actorFactory ActorFactory) *Dispatcher {
-	// number of messages this node can dispatch at the same time
-	bufferSize := 3000 // TODO make it configurable
-	// create actor data store
-	actorCache := cache.New(cache.NoExpiration, cache.NoExpiration)
+func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispatcher {
 	// create the dispatcher
-	return &Dispatcher{
+	dispatcher := &Dispatcher{
 		isReceiving:          false,
-		actors:               actorCache,
-		actorRequests:        make(chan *actorRequest, bufferSize),
-		maxActorInactivity:   time.Second * 5, // TODO make it configurable
-		passivationFrequency: time.Second * 5, // TODO make it configurable
+		actors:               cache.New(cache.NoExpiration, cache.NoExpiration),
+		maxActorInactivity:   5 * time.Second,
+		passivationFrequency: 5 * time.Second,
+		bufferSize:           3000,
+		askTimeout:           5 * time.Second,
 		actorFactory:         actorFactory,
 	}
+	// set the custom options to override the default values
+	for _, opt := range opts {
+		opt(dispatcher)
+	}
+	// set the request channel
+	dispatcher.actorRequests = make(chan *actorRequest, dispatcher.bufferSize)
+	// return the dispatcher
+	return dispatcher
 }
 
 // Send a message to a specific actor
 func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message) (proto.Message, error) {
 	if !x.isReceiving {
-		return nil, errors.New("not ready")
+		return nil, errors.New("not ready to process messages")
 	}
 	for {
 		// get the actor ref
@@ -59,8 +69,8 @@ func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message
 		select {
 		case resp := <-replyChan:
 			return resp, nil
-		case <-time.After(time.Second * 5):
-			return nil, errors.New("timeout")
+		case <-time.After(x.askTimeout):
+			return nil, errors.New("command processing timeout")
 		}
 	}
 }
@@ -111,26 +121,24 @@ func (x *Dispatcher) AwaitTermination() {
 // passivateLoop runs in a goroutine and inactive actors
 func (x *Dispatcher) passivateLoop() {
 	for {
-		// TODO: make this configurable
 		time.Sleep(x.passivationFrequency)
 		// if there are items, start passivating
 		if x.isReceiving && x.actors.ItemCount() > 0 {
 			// loop over actors
-			for actorID, actorIface := range x.actors.Items() {
-				actor, ok := actorIface.Object.(*Mailbox)
+			for actorID, item := range x.actors.Items() {
+				actor, ok := item.Object.(*Mailbox)
 				if !ok {
-					fmt.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
+					log.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
 					continue
 				}
 				idleTime := actor.IdleTime()
 				if actor.IdleTime() >= x.maxActorInactivity {
-					fmt.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
+					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
 					actor.Stop()
 					x.actors.Delete(actor.ID)
-					fmt.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
+					log.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 				}
 			}
 		}
-
 	}
 }

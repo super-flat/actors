@@ -2,7 +2,7 @@ package actors
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -31,7 +31,8 @@ type Mailbox struct {
 
 // NewMailbox returns a new actor
 func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
-	mailboxSize := 10
+	// set the mailbox size
+	mailboxSize := 3000
 	actor := actorFactory(ID)
 	mailbox := &Mailbox{
 		ID:                ID,
@@ -42,7 +43,7 @@ func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
 		actor:             actor,
 	}
 	go mailbox.process()
-	fmt.Printf("(dispatcher) creating actor, id=%s\n", mailbox.ID)
+	log.Printf("[mailbox] creating actor, id=%s\n", mailbox.ID)
 	return mailbox
 }
 
@@ -85,11 +86,11 @@ func (x *Mailbox) Stop() {
 	x.mtx.Unlock()
 	// wait for no more messages
 	for len(x.mailbox) != 0 {
-		fmt.Printf("waiting for mailbox empty, len=%d\n", len(x.mailbox))
+		log.Printf("[mailbox] waiting for mailbox empty, len=%d\n", len(x.mailbox))
 		time.Sleep(time.Millisecond)
 	}
 	// begin shutdown
-	fmt.Printf("(%s) shutting down\n", x.ID)
+	log.Printf("[mailbox] (%s) shutting down\n", x.ID)
 	x.stop <- true
 }
 
@@ -103,7 +104,7 @@ func (x *Mailbox) process() {
 			// let the actor process the command
 			err := x.actor.Receive(wrapper.CommandCtx, wrapper.Command, wrapper.ReplyChan)
 			if err != nil {
-				fmt.Printf("error handling message, messageType=%s, err=%s\n", wrapper.Command.ProtoReflect().Descriptor().FullName(), err.Error())
+				log.Printf("[mailbox] error handling message, messageType=%s, err=%s\n", wrapper.Command.ProtoReflect().Descriptor().FullName(), err.Error())
 			}
 			x.msgCount += 1
 		default:
