@@ -18,8 +18,7 @@ type actorRequest struct {
 // Dispatcher directly manages actors and dispatches messages to them
 type Dispatcher struct {
 	isReceiving   bool
-	actors        map[string]*Mailbox
-	actorsMtx     sync.Mutex
+	actors        *ActorMap
 	actorRequests chan *actorRequest
 
 	maxActorInactivity   time.Duration
@@ -33,13 +32,10 @@ type Dispatcher struct {
 
 // NewActorDispatcher returns a new Dispatcher
 func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispatcher {
-	// create an empty actor map with some default capacity
-	actorMap := make(map[string]*Mailbox, 100)
 	// create the dispatcher
 	dispatcher := &Dispatcher{
 		isReceiving:          false,
-		actors:               actorMap,
-		actorsMtx:            sync.Mutex{},
+		actors:               NewActorMap(100),
 		maxActorInactivity:   5 * time.Second,
 		passivationFrequency: 5 * time.Second,
 		bufferSize:           3000,
@@ -85,7 +81,7 @@ func (x *Dispatcher) Start() {
 		return
 	}
 	go x.actorLoop()
-	// go x.passivateLoop()
+	go x.passivateLoop()
 	x.isReceiving = true
 }
 
@@ -103,12 +99,10 @@ func (x *Dispatcher) actorLoop() {
 	for {
 		req := <-x.actorRequests
 		// get or create the actor from cache
-		actor, exists := x.actors[req.actorID]
+		actor, exists := x.actors.Get(req.actorID)
 		if !exists {
 			actor = NewMailbox(req.actorID, x.actorFactory)
-			x.actorsMtx.Lock()
-			x.actors[actor.ID] = actor
-			x.actorsMtx.Unlock()
+			x.actors.Set(actor)
 		}
 		req.replyTo <- actor
 	}
@@ -133,22 +127,56 @@ func (x *Dispatcher) passivateLoop() {
 		// if there are items, start passivating
 		if x.isReceiving {
 			// loop over actors
-			for _, actor := range x.actors {
+			for _, actor := range x.actors.List() {
 				idleTime := actor.IdleTime()
 				if actor.IdleTime() >= x.maxActorInactivity {
 					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
 					// stop the actor
 					actor.Stop()
-					// acquire lock
-					x.actorsMtx.Lock()
 					// remove actor from map
-					delete(x.actors, actor.ID)
-					// release lock
-					x.actorsMtx.Unlock()
+					x.actors.Delete(actor.ID)
 					log.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 				}
 			}
 		}
 
 	}
+}
+
+type ActorMap struct {
+	actors map[string]*Mailbox
+	mtx    sync.Mutex
+}
+
+func NewActorMap(initialCapacity int) *ActorMap {
+	return &ActorMap{
+		actors: make(map[string]*Mailbox, initialCapacity),
+		mtx:    sync.Mutex{},
+	}
+}
+
+func (x *ActorMap) Get(id string) (value *Mailbox, exists bool) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+	value, exists = x.actors[id]
+	return value, exists
+}
+
+func (x *ActorMap) Set(value *Mailbox) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+	x.actors[value.ID] = value
+}
+func (x *ActorMap) Delete(id string) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+	delete(x.actors, id)
+}
+
+func (x *ActorMap) List() []*Mailbox {
+	out := make([]*Mailbox, 0, len(x.actors))
+	for _, actor := range x.actors {
+		out = append(out, actor)
+	}
+	return out
 }
