@@ -81,7 +81,7 @@ func (x *Dispatcher) Start() {
 		return
 	}
 	go x.actorLoop()
-	go x.passivateLoop()
+	// go x.passivateLoop()
 	x.isReceiving = true
 }
 
