@@ -113,9 +113,14 @@ func (x *Dispatcher) actorLoop() {
 
 // AwaitTermination blocks until the dispatcher is ready to shut down
 func (x *Dispatcher) AwaitTermination() {
-	for x.isReceiving {
-		time.Sleep(time.Millisecond * 100)
+	awaitFrequency := time.Millisecond * 100
+	select {
+	case <-time.Await(awaitFrequency):
+		if !x.isReceiving {
+			return
+		}
 	}
+
 }
 
 // passivateLoop runs in a goroutine and inactive actors
