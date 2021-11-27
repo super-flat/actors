@@ -114,11 +114,11 @@ func (x *Dispatcher) actorLoop() {
 // AwaitTermination blocks until the dispatcher is ready to shut down
 func (x *Dispatcher) AwaitTermination() {
 	awaitFrequency := time.Millisecond * 100
-	select {
-	case <-time.After(awaitFrequency):
+	for {
 		if !x.isReceiving {
 			return
 		}
+		time.Sleep(awaitFrequency)
 	}
 
 }
@@ -126,26 +126,25 @@ func (x *Dispatcher) AwaitTermination() {
 // passivateLoop runs in a goroutine and inactive actors
 func (x *Dispatcher) passivateLoop() {
 	for {
-		select {
-		case <-time.After(x.passivationFrequency):
-			// if there are items, start passivating
-			if x.isReceiving && x.actors.ItemCount() > 0 {
-				// loop over actors
-				for actorID, item := range x.actors.Items() {
-					actor, ok := item.Object.(*Mailbox)
-					if !ok {
-						log.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
-						continue
-					}
-					idleTime := actor.IdleTime()
-					if actor.IdleTime() >= x.maxActorInactivity {
-						log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
-						actor.Stop()
-						x.actors.Delete(actor.ID)
-						log.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
-					}
+		time.Sleep(x.passivationFrequency)
+		// if there are items, start passivating
+		if x.isReceiving && x.actors.ItemCount() > 0 {
+			// loop over actors
+			for actorID, item := range x.actors.Items() {
+				actor, ok := item.Object.(*Mailbox)
+				if !ok {
+					log.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
+					continue
+				}
+				idleTime := actor.IdleTime()
+				if actor.IdleTime() >= x.maxActorInactivity {
+					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
+					actor.Stop()
+					x.actors.Delete(actor.ID)
+					log.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 				}
 			}
 		}
+
 	}
 }
