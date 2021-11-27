@@ -24,5 +24,4 @@ func (x SampleActor) Receive(ctx context.Context, command proto.Message, replyTo
 	fmt.Printf("(%s) received msg='%s'\n", x.ID, msgString.GetValue())
 	replyToChan <- wrapperspb.String(fmt.Sprintf("reply %s", msgString.GetValue()))
 	return nil
-
 }

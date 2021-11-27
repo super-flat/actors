@@ -32,12 +32,12 @@ type Mailbox struct {
 // NewMailbox returns a new actor
 func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
 	// set the mailbox size
-	mailboxSize := 3000
+	mailboxSize := 10
 	actor := actorFactory(ID)
 	mailbox := &Mailbox{
 		ID:                ID,
 		mailbox:           make(chan *CommandWrapper, mailboxSize),
-		stop:              make(chan bool, 1),
+		stop:              make(chan bool, 10),
 		lastUpdated:       time.Now(),
 		acceptingMessages: true,
 		actor:             actor,
