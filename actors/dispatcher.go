@@ -3,9 +3,9 @@ package actors
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 )
@@ -18,7 +18,8 @@ type actorRequest struct {
 // Dispatcher directly manages actors and dispatches messages to them
 type Dispatcher struct {
 	isReceiving   bool
-	actors        *cache.Cache
+	actors        map[string]*Mailbox
+	actorsMtx     sync.Mutex
 	actorRequests chan *actorRequest
 
 	maxActorInactivity   time.Duration
@@ -32,10 +33,13 @@ type Dispatcher struct {
 
 // NewActorDispatcher returns a new Dispatcher
 func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispatcher {
+	// create an empty actor map with some default capacity
+	actorMap := make(map[string]*Mailbox, 100)
 	// create the dispatcher
 	dispatcher := &Dispatcher{
 		isReceiving:          false,
-		actors:               cache.New(cache.NoExpiration, cache.NoExpiration),
+		actors:               actorMap,
+		actorsMtx:            sync.Mutex{},
 		maxActorInactivity:   5 * time.Second,
 		passivationFrequency: 5 * time.Second,
 		bufferSize:           3000,
@@ -99,13 +103,12 @@ func (x *Dispatcher) actorLoop() {
 	for {
 		req := <-x.actorRequests
 		// get or create the actor from cache
-		var actor *Mailbox
-		value, exists := x.actors.Get(req.actorID)
-		if exists {
-			actor, _ = value.(*Mailbox)
-		} else {
+		actor, exists := x.actors[req.actorID]
+		if !exists {
 			actor = NewMailbox(req.actorID, x.actorFactory)
-			x.actors.SetDefault(actor.ID, actor)
+			x.actorsMtx.Lock()
+			x.actors[actor.ID] = actor
+			x.actorsMtx.Unlock()
 		}
 		req.replyTo <- actor
 	}
@@ -128,19 +131,20 @@ func (x *Dispatcher) passivateLoop() {
 	for {
 		time.Sleep(x.passivationFrequency)
 		// if there are items, start passivating
-		if x.isReceiving && x.actors.ItemCount() > 0 {
+		if x.isReceiving {
 			// loop over actors
-			for actorID, item := range x.actors.Items() {
-				actor, ok := item.Object.(*Mailbox)
-				if !ok {
-					log.Printf("(dispatcher) bad actor in state, id=%s\n", actorID)
-					continue
-				}
+			for _, actor := range x.actors {
 				idleTime := actor.IdleTime()
 				if actor.IdleTime() >= x.maxActorInactivity {
 					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
+					// stop the actor
 					actor.Stop()
-					x.actors.Delete(actor.ID)
+					// acquire lock
+					x.actorsMtx.Lock()
+					// remove actor from map
+					delete(x.actors, actor.ID)
+					// release lock
+					x.actorsMtx.Unlock()
 					log.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 				}
 			}
