@@ -80,33 +80,38 @@ func (x *Dispatcher) Start() {
 	if x.isReceiving {
 		return
 	}
-	go x.actorLoop()
+	// go x.actorLoop()
 	go x.passivateLoop()
 	x.isReceiving = true
 }
 
 // getActor gets or creates an actor in a thread-safe manner
 func (x *Dispatcher) getActor(actorID string) *Mailbox {
-	actorChan := make(chan *Mailbox)
-	r := &actorRequest{actorID: actorID, replyTo: actorChan}
-	x.actorRequests <- r
-	actor := <-actorChan
+	// actorChan := make(chan *Mailbox)
+	// r := &actorRequest{actorID: actorID, replyTo: actorChan}
+	// x.actorRequests <- r
+	// actor := <-actorChan
+	// return actor
+	factory := func() *Mailbox {
+		return NewMailbox(actorID, x.actorFactory)
+	}
+	actor := x.actors.GetOrCreate(actorID, factory)
 	return actor
 }
 
-// actorLoop runs in a goroutine to create actors one at a time
-func (x *Dispatcher) actorLoop() {
-	for {
-		req := <-x.actorRequests
-		// get or create the actor from cache
-		actor, exists := x.actors.Get(req.actorID)
-		if !exists {
-			actor = NewMailbox(req.actorID, x.actorFactory)
-			x.actors.Set(actor)
-		}
-		req.replyTo <- actor
-	}
-}
+// // actorLoop runs in a goroutine to create actors one at a time
+// func (x *Dispatcher) actorLoop() {
+// 	for {
+// 		req := <-x.actorRequests
+// 		// get or create the actor from cache
+// 		actor, exists := x.actors.Get(req.actorID)
+// 		if !exists {
+// 			actor = NewMailbox(req.actorID, x.actorFactory)
+// 			x.actors.Set(actor)
+// 		}
+// 		req.replyTo <- actor
+// 	}
+// }
 
 // AwaitTermination blocks until the dispatcher is ready to shut down
 func (x *Dispatcher) AwaitTermination() {
@@ -160,6 +165,17 @@ func (x *ActorMap) Get(id string) (value *Mailbox, exists bool) {
 	defer x.mtx.Unlock()
 	value, exists = x.actors[id]
 	return value, exists
+}
+
+func (x *ActorMap) GetOrCreate(id string, factory func() *Mailbox) (value *Mailbox) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+	actor, exists := x.actors[id]
+	if !exists {
+		actor = factory()
+		x.actors[actor.ID] = actor
+	}
+	return actor
 }
 
 func (x *ActorMap) Set(value *Mailbox) {
