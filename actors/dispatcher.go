@@ -115,7 +115,7 @@ func (x *Dispatcher) actorLoop() {
 func (x *Dispatcher) AwaitTermination() {
 	awaitFrequency := time.Millisecond * 100
 	select {
-	case <-time.Await(awaitFrequency):
+	case <-time.After(awaitFrequency):
 		if !x.isReceiving {
 			return
 		}
@@ -127,7 +127,7 @@ func (x *Dispatcher) AwaitTermination() {
 func (x *Dispatcher) passivateLoop() {
 	for {
 		select {
-		case <-time.Await(x.passivationFrequency):
+		case <-time.After(x.passivationFrequency):
 			// if there are items, start passivating
 			if x.isReceiving && x.actors.ItemCount() > 0 {
 				// loop over actors
