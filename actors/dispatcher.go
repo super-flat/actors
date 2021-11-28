@@ -10,16 +10,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type actorRequest struct {
-	actorID string
-	replyTo chan<- *Mailbox
-}
-
 // Dispatcher directly manages actors and dispatches messages to them
 type Dispatcher struct {
-	isReceiving   bool
-	actors        *ActorMap
-	actorRequests chan *actorRequest
+	isReceiving bool
+	actors      *ActorMap
 
 	maxActorInactivity   time.Duration
 	passivationFrequency time.Duration
@@ -46,8 +40,6 @@ func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispa
 	for _, opt := range opts {
 		opt(dispatcher)
 	}
-	// set the request channel
-	dispatcher.actorRequests = make(chan *actorRequest, dispatcher.bufferSize)
 	// return the dispatcher
 	return dispatcher
 }
@@ -87,31 +79,12 @@ func (x *Dispatcher) Start() {
 
 // getActor gets or creates an actor in a thread-safe manner
 func (x *Dispatcher) getActor(actorID string) *Mailbox {
-	// actorChan := make(chan *Mailbox)
-	// r := &actorRequest{actorID: actorID, replyTo: actorChan}
-	// x.actorRequests <- r
-	// actor := <-actorChan
-	// return actor
 	factory := func() *Mailbox {
 		return NewMailbox(actorID, x.actorFactory)
 	}
 	actor := x.actors.GetOrCreate(actorID, factory)
 	return actor
 }
-
-// // actorLoop runs in a goroutine to create actors one at a time
-// func (x *Dispatcher) actorLoop() {
-// 	for {
-// 		req := <-x.actorRequests
-// 		// get or create the actor from cache
-// 		actor, exists := x.actors.Get(req.actorID)
-// 		if !exists {
-// 			actor = NewMailbox(req.actorID, x.actorFactory)
-// 			x.actors.Set(actor)
-// 		}
-// 		req.replyTo <- actor
-// 	}
-// }
 
 // AwaitTermination blocks until the dispatcher is ready to shut down
 func (x *Dispatcher) AwaitTermination() {

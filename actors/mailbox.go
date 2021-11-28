@@ -72,7 +72,6 @@ func (x *Mailbox) AddToMailbox(ctx context.Context, msg proto.Message) (success 
 		Command:    msg,
 		ReplyChan:  replyTo,
 	}
-
 	// return the response
 	return true, replyTo
 }
