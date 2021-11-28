@@ -53,7 +53,7 @@ func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message
 		// get the actor ref
 		actor := x.getActor(actorID)
 		// send the message, get the reply channel
-		success, replyChan := actor.AddToMailbox(ctx, msg)
+		success, replyChan := actor.Send(ctx, msg)
 		if !success {
 			continue
 		}

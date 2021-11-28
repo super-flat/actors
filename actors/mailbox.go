@@ -30,10 +30,11 @@ type Mailbox struct {
 }
 
 // NewMailbox returns a new actor
-func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
-	// set the mailbox size
+func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mailbox {
+	// TODO set the mailbox size
 	// mailboxSize := 10
 	actor := actorFactory(ID)
+	// create the actor mailbox
 	mailbox := &Mailbox{
 		ID:                ID,
 		mailbox:           make(chan *CommandWrapper),
@@ -42,7 +43,9 @@ func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
 		acceptingMessages: true,
 		actor:             actor,
 	}
-	go mailbox.process()
+	// initialize the actor and start the actor loop
+	go mailbox.selfInit(ctx)
+	// return the mailbox
 	return mailbox
 }
 
@@ -51,9 +54,9 @@ func (x *Mailbox) IdleTime() time.Duration {
 	return time.Since(x.lastUpdated)
 }
 
-// AddToMailbox adds a message to the actors' mailbox to be processed and
+// Send sends a message to the actors' mailbox to be processed and
 // supplies an optional reply channel for responses to the sender
-func (x *Mailbox) AddToMailbox(ctx context.Context, msg proto.Message) (success bool, replyChan <-chan proto.Message) {
+func (x *Mailbox) Send(ctx context.Context, msg proto.Message) (success bool, replyChan <-chan proto.Message) {
 	// acquire a lock
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
@@ -93,21 +96,31 @@ func (x *Mailbox) Stop() {
 	x.stop <- true
 }
 
-// process runs in the background and processes all messages in the mailbox
-func (x *Mailbox) process() {
-	x.actor.Init(context.Background())
-
+// the actor loop
+func (x *Mailbox) receiverLoop() {
 	for {
 		select {
 		case <-x.stop:
 			return
-		case wrapper := <-x.mailbox:
+		case received := <-x.mailbox:
 			// let the actor process the command
-			err := x.actor.Receive(wrapper.CommandCtx, wrapper.Command, wrapper.ReplyChan)
+			err := x.actor.Receive(received.CommandCtx, received.Command, received.ReplyChan)
 			if err != nil {
-				log.Printf("[mailbox] error handling message, messageType=%s, err=%s\n", wrapper.Command.ProtoReflect().Descriptor().FullName(), err.Error())
+				log.Printf("[mailbox] error handling message, messageType=%s, err=%s\n", received.Command.ProtoReflect().Descriptor().FullName(), err.Error())
 			}
+			// increase the message counter
+			// TODO add this prometheus
 			x.msgCount += 1
 		}
 	}
+}
+
+// process runs in the background and processes all messages in the mailbox
+func (x *Mailbox) selfInit(ctx context.Context) {
+	// initialize the actor
+	if err := x.actor.Init(ctx); err != nil {
+		log.Panicf("[mailbox] failed to initialize actor, err=%s", err.Error())
+	}
+	// start the actor loop
+	x.receiverLoop()
 }
