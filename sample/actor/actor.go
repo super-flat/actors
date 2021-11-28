@@ -27,3 +27,7 @@ func (x SampleActor) Receive(ctx context.Context, command proto.Message, replyTo
 	replyToChan <- wrapperspb.String(fmt.Sprintf("reply %s", msgString.GetValue()))
 	return nil
 }
+
+func (x *SampleActor) Init(ctx context.Context) error {
+	return nil
+}

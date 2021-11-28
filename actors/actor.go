@@ -9,6 +9,7 @@ import (
 // Actor knows how to receive and process messages
 type Actor interface {
 	Receive(ctx context.Context, command proto.Message, replyToChan chan<- proto.Message) error
+	Init(ctx context.Context) error
 }
 
 // ActorFactory is a function that returns an actor, to be used as a factory

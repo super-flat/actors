@@ -43,7 +43,6 @@ func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
 		actor:             actor,
 	}
 	go mailbox.process()
-	// log.Printf("[mailbox] creating actor, id=%s\n", mailbox.ID)
 	return mailbox
 }
 
@@ -96,6 +95,8 @@ func (x *Mailbox) Stop() {
 
 // process runs in the background and processes all messages in the mailbox
 func (x *Mailbox) process() {
+	x.actor.Init(context.Background())
+
 	for {
 		select {
 		case <-x.stop:
