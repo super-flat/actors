@@ -108,8 +108,6 @@ func (x *Mailbox) process() {
 				log.Printf("[mailbox] error handling message, messageType=%s, err=%s\n", wrapper.Command.ProtoReflect().Descriptor().FullName(), err.Error())
 			}
 			x.msgCount += 1
-		default:
-			continue
 		}
 	}
 }
