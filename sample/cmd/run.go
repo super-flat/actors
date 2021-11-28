@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,30 +31,65 @@ func Sample() {
 
 	nd := actors.NewActorDispatcher(actorFactory)
 	nd.Start()
-	go sendMessages(nd, "sender-1", "actor-1", time.Second*20)
-	go sendMessages(nd, "sender-2", "actor-1", time.Second*15)
-	go sendMessages(nd, "sender-3", "actor-2", time.Second*3)
+
+	metrics := &counter{
+		calls:    0,
+		duration: time.Millisecond * 0,
+		mtx:      &sync.Mutex{},
+	}
+
+	go doReporting(metrics)
+
+	go sendMessages(nd, "sender-0", "actor-0", time.Millisecond*10, metrics, 20*time.Minute)
+
+	for i := 0; i < 20; i++ {
+		senderID := "sender-1"
+		actorID := fmt.Sprintf("actor-%d", i)
+		go sendMessages(nd, senderID, actorID, time.Millisecond*10, metrics, 20*time.Second)
+		time.Sleep(3 * time.Second)
+	}
+
 	nd.AwaitTermination()
 }
 
-func sendMessages(nd *actors.Dispatcher, senderID string, actorID string, sleepTime time.Duration) {
-	counter := 0
+func sendMessages(nd *actors.Dispatcher, senderID string, actorID string, sleepTime time.Duration, metrics *counter, lifespan time.Duration) {
+	loopCount := 0
 
-	for {
-		msg := wrapperspb.String(fmt.Sprintf("message %d from %s", counter, senderID))
-		fmt.Printf("(%s) sending msg to actor_id=%s, msg=%s\n", senderID, actorID, msg.GetValue())
-		response, err := nd.Send(context.Background(), actorID, msg)
-		if err != nil {
-			fmt.Printf("send failed, counter=%d, err=%s\n", counter, err.Error())
-		}
+	outerStart := time.Now()
 
-		if response != nil {
-			// cast the response to StringValue
-			actualResp := response.(*wrapperspb.StringValue)
-			fmt.Printf("(%s) received actor_id=%s, msg=%s\n", senderID, actorID, actualResp.GetValue())
-		}
-
-		counter += 1
+	for time.Since(outerStart) < lifespan {
+		msg := wrapperspb.String(fmt.Sprintf("message %d from %s", loopCount, senderID))
+		start := time.Now()
+		_, _ = nd.Send(context.Background(), actorID, msg)
+		metrics.Add(time.Since(start))
+		loopCount += 1
 		time.Sleep(sleepTime)
 	}
+}
+
+func doReporting(metrics *counter) {
+	for {
+		time.Sleep(500 * time.Millisecond)
+		metrics.Report()
+	}
+}
+
+type counter struct {
+	calls    int64
+	duration time.Duration
+	mtx      *sync.Mutex
+}
+
+func (c *counter) Add(t time.Duration) {
+	c.mtx.Lock()
+	c.calls += 1
+	c.duration = c.duration + t
+	c.mtx.Unlock()
+}
+
+func (c *counter) Report() {
+	c.mtx.Lock()
+	avg := c.duration.Milliseconds() / c.calls
+	log.Printf("[Metrics] avg=%dms, calls=%d\n", avg, c.calls)
+	c.mtx.Unlock()
 }
