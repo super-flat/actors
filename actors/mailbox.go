@@ -31,10 +31,6 @@ type Mailbox struct {
 
 // NewMailbox returns a new actor
 func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mailbox {
-	// get the observability span
-	spanCtx, span := getSpanContext(ctx, "Actor.Mailbox.New")
-	defer span.End()
-
 	// TODO set the mailbox size
 	// mailboxSize := 10
 	actor := actorFactory(ID)
@@ -48,7 +44,9 @@ func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mail
 		actor:             actor,
 	}
 	// initialize the actor and start the actor loop
-	go mailbox.selfInit(spanCtx)
+	mailbox.selfInit(ctx)
+	// start the actor loop
+	go mailbox.receiverLoop()
 	// return the mailbox
 	return mailbox
 }
@@ -131,6 +129,4 @@ func (x *Mailbox) selfInit(ctx context.Context) {
 	if err := x.actor.Init(spanCtx); err != nil {
 		log.Panicf("[mailbox] failed to initialize actor, err=%s", err.Error())
 	}
-	// start the actor loop
-	x.receiverLoop()
 }
