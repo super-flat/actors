@@ -46,14 +46,17 @@ func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispa
 
 // Send a message to a specific actor
 func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message) (proto.Message, error) {
+	// get the observability span
+	spanCtx, span := getSpanContext(ctx, "Actor.Dispatcher.Send")
+	defer span.End()
 	if !x.isReceiving {
 		return nil, errors.New("not ready to process messages")
 	}
 	for {
 		// get the actor ref
-		actor := x.getActor(ctx, actorID)
+		actor := x.getActor(spanCtx, actorID)
 		// send the message, get the reply channel
-		success, replyChan := actor.Send(ctx, msg)
+		success, replyChan := actor.Send(spanCtx, msg)
 		if !success {
 			continue
 		}
@@ -79,8 +82,11 @@ func (x *Dispatcher) Start() {
 
 // getActor gets or creates an actor in a thread-safe manner
 func (x *Dispatcher) getActor(ctx context.Context, actorID string) *Mailbox {
+	// get the observability span
+	spanCtx, span := getSpanContext(ctx, "Actor.Dispatcher.GetOrCreate")
+	defer span.End()
 	factory := func() *Mailbox {
-		return NewMailbox(ctx, actorID, x.actorFactory)
+		return NewMailbox(spanCtx, actorID, x.actorFactory)
 	}
 	actor := x.actors.GetOrCreate(actorID, factory)
 	return actor

@@ -31,6 +31,10 @@ type Mailbox struct {
 
 // NewMailbox returns a new actor
 func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mailbox {
+	// get the observability span
+	spanCtx, span := getSpanContext(ctx, "Actor.Mailbox.New")
+	defer span.End()
+
 	// TODO set the mailbox size
 	// mailboxSize := 10
 	actor := actorFactory(ID)
@@ -44,7 +48,7 @@ func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mail
 		actor:             actor,
 	}
 	// initialize the actor and start the actor loop
-	go mailbox.selfInit(ctx)
+	go mailbox.selfInit(spanCtx)
 	// return the mailbox
 	return mailbox
 }
@@ -57,6 +61,9 @@ func (x *Mailbox) IdleTime() time.Duration {
 // Send sends a message to the actors' mailbox to be processed and
 // supplies an optional reply channel for responses to the sender
 func (x *Mailbox) Send(ctx context.Context, msg proto.Message) (success bool, replyChan <-chan proto.Message) {
+	// get the observability span
+	spanCtx, span := getSpanContext(ctx, "Actor.Mailbox.Send")
+	defer span.End()
 	// acquire a lock
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
@@ -70,7 +77,7 @@ func (x *Mailbox) Send(ctx context.Context, msg proto.Message) (success bool, re
 	replyTo := make(chan proto.Message, 1)
 	// if successfully push to channel, return true, else false
 	x.mailbox <- &CommandWrapper{
-		CommandCtx: ctx,
+		CommandCtx: spanCtx,
 		Command:    msg,
 		ReplyChan:  replyTo,
 	}
@@ -117,8 +124,11 @@ func (x *Mailbox) receiverLoop() {
 
 // process runs in the background and processes all messages in the mailbox
 func (x *Mailbox) selfInit(ctx context.Context) {
+	// get the observability span
+	spanCtx, span := getSpanContext(ctx, "Actor.Mailbox.Init")
+	defer span.End()
 	// initialize the actor
-	if err := x.actor.Init(ctx); err != nil {
+	if err := x.actor.Init(spanCtx); err != nil {
 		log.Panicf("[mailbox] failed to initialize actor, err=%s", err.Error())
 	}
 	// start the actor loop

@@ -6,6 +6,8 @@ require (
 	github.com/joho/godotenv v1.4.0
 	github.com/pkg/errors v0.8.1
 	github.com/spf13/cobra v1.2.1
+	go.opentelemetry.io/otel v1.2.0
+	go.opentelemetry.io/otel/trace v1.2.0
 	google.golang.org/protobuf v1.27.1
 )
 
