@@ -134,7 +134,7 @@ func (x *Dispatcher) passivateLoop() {
 			// loop over actors
 			for _, actor := range x.actors.List() {
 				idleTime := actor.IdleTime()
-				if actor.IdleTime() >= x.maxActorInactivity {
+				if idleTime >= x.maxActorInactivity {
 					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
 					// stop the actor
 					actor.Stop()

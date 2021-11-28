@@ -32,18 +32,18 @@ type Mailbox struct {
 // NewMailbox returns a new actor
 func NewMailbox(ID string, actorFactory ActorFactory) *Mailbox {
 	// set the mailbox size
-	mailboxSize := 10
+	// mailboxSize := 10
 	actor := actorFactory(ID)
 	mailbox := &Mailbox{
 		ID:                ID,
-		mailbox:           make(chan *CommandWrapper, mailboxSize),
-		stop:              make(chan bool, 10),
+		mailbox:           make(chan *CommandWrapper),
+		stop:              make(chan bool),
 		lastUpdated:       time.Now(),
 		acceptingMessages: true,
 		actor:             actor,
 	}
 	go mailbox.process()
-	log.Printf("[mailbox] creating actor, id=%s\n", mailbox.ID)
+	// log.Printf("[mailbox] creating actor, id=%s\n", mailbox.ID)
 	return mailbox
 }
 
@@ -72,6 +72,7 @@ func (x *Mailbox) AddToMailbox(ctx context.Context, msg proto.Message) (success 
 		Command:    msg,
 		ReplyChan:  replyTo,
 	}
+
 	// return the response
 	return true, replyTo
 }
@@ -86,7 +87,7 @@ func (x *Mailbox) Stop() {
 	x.mtx.Unlock()
 	// wait for no more messages
 	for len(x.mailbox) != 0 {
-		log.Printf("[mailbox] waiting for mailbox empty, len=%d\n", len(x.mailbox))
+		// log.Printf("[mailbox] waiting for mailbox empty, len=%d\n", len(x.mailbox))
 		time.Sleep(time.Millisecond)
 	}
 	// begin shutdown
