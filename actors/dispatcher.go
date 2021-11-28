@@ -51,7 +51,7 @@ func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message
 	}
 	for {
 		// get the actor ref
-		actor := x.getActor(actorID)
+		actor := x.getActor(ctx, actorID)
 		// send the message, get the reply channel
 		success, replyChan := actor.Send(ctx, msg)
 		if !success {
@@ -78,9 +78,9 @@ func (x *Dispatcher) Start() {
 }
 
 // getActor gets or creates an actor in a thread-safe manner
-func (x *Dispatcher) getActor(actorID string) *Mailbox {
+func (x *Dispatcher) getActor(ctx context.Context, actorID string) *Mailbox {
 	factory := func() *Mailbox {
-		return NewMailbox(actorID, x.actorFactory)
+		return NewMailbox(ctx, actorID, x.actorFactory)
 	}
 	actor := x.actors.GetOrCreate(actorID, factory)
 	return actor
