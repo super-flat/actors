@@ -156,7 +156,6 @@ func (x *Mailbox) sleepBackoff(base time.Duration, maxBackoff time.Duration, fac
 	// compute milliseconds to backoff
 	backoffMs := int64(float64(base.Milliseconds()) * backoffFactor)
 	backoffDuration := time.Duration(backoffMs) * time.Millisecond
-	log.Printf("backoff %v", backoffDuration)
 	// only backoff up to max backoff
 	if backoffDuration > maxBackoff {
 		backoffDuration = maxBackoff
