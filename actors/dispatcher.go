@@ -13,7 +13,7 @@ import (
 // Dispatcher directly manages actors and dispatches messages to them
 type Dispatcher struct {
 	isReceiving bool
-	actors      *ActorMap
+	actors      *actorMap
 
 	maxActorInactivity   time.Duration
 	passivationFrequency time.Duration
@@ -29,7 +29,7 @@ func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispa
 	// create the dispatcher
 	dispatcher := &Dispatcher{
 		isReceiving:          false,
-		actors:               NewActorMap(100),
+		actors:               newActorMap(100),
 		maxActorInactivity:   5 * time.Second,
 		passivationFrequency: 5 * time.Second,
 		bufferSize:           3000,
@@ -109,7 +109,7 @@ func (x *Dispatcher) passivateLoop() {
 		// if there are items, start passivating
 		if x.isReceiving {
 			// loop over actors
-			for _, actor := range x.actors.List() {
+			for _, actor := range x.actors.GetAll() {
 				idleTime := actor.IdleTime()
 				if idleTime >= x.maxActorInactivity {
 					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
@@ -121,30 +121,34 @@ func (x *Dispatcher) passivateLoop() {
 				}
 			}
 		}
-
 	}
 }
 
-type ActorMap struct {
+// actorMap stores actors for an actor system and allows thread-safe
+// get/set operations
+type actorMap struct {
 	actors map[string]*Mailbox
 	mtx    sync.Mutex
 }
 
-func NewActorMap(initialCapacity int) *ActorMap {
-	return &ActorMap{
+// newActorMap instantiates a new actor map
+func newActorMap(initialCapacity int) *actorMap {
+	return &actorMap{
 		actors: make(map[string]*Mailbox, initialCapacity),
 		mtx:    sync.Mutex{},
 	}
 }
 
-func (x *ActorMap) Get(id string) (value *Mailbox, exists bool) {
+// Get retrieves an actor by ID
+func (x *actorMap) Get(id string) (value *Mailbox, exists bool) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	value, exists = x.actors[id]
 	return value, exists
 }
 
-func (x *ActorMap) GetOrCreate(id string, factory func() *Mailbox) (value *Mailbox) {
+// GetOrCreate retrieves or creates an actor by ID
+func (x *actorMap) GetOrCreate(id string, factory func() *Mailbox) (value *Mailbox) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	actor, exists := x.actors[id]
@@ -155,18 +159,22 @@ func (x *ActorMap) GetOrCreate(id string, factory func() *Mailbox) (value *Mailb
 	return actor
 }
 
-func (x *ActorMap) Set(value *Mailbox) {
+// Set sets an actor in the map
+func (x *actorMap) Set(value *Mailbox) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	x.actors[value.ID] = value
 }
-func (x *ActorMap) Delete(id string) {
+
+// Delete removes an actor from the map
+func (x *actorMap) Delete(id string) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	delete(x.actors, id)
 }
 
-func (x *ActorMap) List() []*Mailbox {
+// GetAll returns all actors as a slice
+func (x *actorMap) GetAll() []*Mailbox {
 	out := make([]*Mailbox, 0, len(x.actors))
 	for _, actor := range x.actors {
 		out = append(out, actor)
