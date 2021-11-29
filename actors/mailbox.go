@@ -31,13 +31,15 @@ type Mailbox struct {
 
 // NewMailbox returns a new actor
 func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mailbox {
-	// TODO set the mailbox size
-	// mailboxSize := 10
+	// set the mailbox size
+	// TODO: make configurable
+	mailboxSize := 10
+	// create the inner actor
 	actor := actorFactory(ID)
 	// create the actor mailbox
 	mailbox := &Mailbox{
 		ID:                ID,
-		mailbox:           make(chan *CommandWrapper),
+		mailbox:           make(chan *CommandWrapper, mailboxSize),
 		stop:              make(chan bool),
 		lastUpdated:       time.Now(),
 		acceptingMessages: true,
