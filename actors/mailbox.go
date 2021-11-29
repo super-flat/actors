@@ -98,8 +98,8 @@ func (x *Mailbox) Stop() {
 		time.Sleep(time.Millisecond)
 	}
 	// begin shutdown
-	log.Printf("[mailbox] (%s) shutting down\n", x.ID)
 	x.stop <- true
+	log.Printf("[mailbox] (%s) shutting down\n", x.ID)
 }
 
 // run the actor loop

@@ -32,7 +32,6 @@ func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispa
 		actors:               newActorMap(100),
 		maxActorInactivity:   5 * time.Second,
 		passivationFrequency: 5 * time.Second,
-		bufferSize:           3000,
 		askTimeout:           5 * time.Second,
 		actorFactory:         actorFactory,
 	}
@@ -73,7 +72,6 @@ func (x *Dispatcher) Start() {
 	if x.isReceiving {
 		return
 	}
-	// go x.actorLoop()
 	go x.passivateLoop()
 	x.isReceiving = true
 }
@@ -88,18 +86,6 @@ func (x *Dispatcher) getActor(ctx context.Context, actorID string) *Mailbox {
 	}
 	actor := x.actors.GetOrCreate(actorID, factory)
 	return actor
-}
-
-// AwaitTermination blocks until the dispatcher is ready to shut down
-func (x *Dispatcher) AwaitTermination() {
-	awaitFrequency := time.Millisecond * 100
-	for {
-		if !x.isReceiving {
-			return
-		}
-		time.Sleep(awaitFrequency)
-	}
-
 }
 
 // passivateLoop runs in a goroutine and inactive actors
@@ -124,6 +110,55 @@ func (x *Dispatcher) passivateLoop() {
 	}
 }
 
+// Shutdown disables receiving new messages and shuts down all actors
+func (x *Dispatcher) Shutdown() {
+	log.Printf("(dispatcher) shutting down")
+	x.isReceiving = false
+	for {
+		// check there are actors to shut down
+		if x.actors.Len() == 0 {
+			break
+		}
+		// get actors to delete
+		actors := x.actors.GetAll()
+		actorWg := &sync.WaitGroup{}
+		actorWg.Add(len(actors))
+		// create workers with channel to synchronize work
+		isDone := false
+		numWorkers := 10
+		workerWg := &sync.WaitGroup{}
+		workChan := make(chan (*Mailbox), numWorkers)
+		workerFn := func() {
+			workerWg.Add(1)
+			for {
+				if isDone {
+					break
+				}
+				actor := <-workChan
+				actor.Stop()
+				x.actors.Delete(actor.ID)
+				actorWg.Done()
+			}
+			workerWg.Done()
+		}
+		for i := 0; i < numWorkers; i++ {
+			go workerFn()
+		}
+		// send actors to workers for shutdown
+		for _, actor := range actors {
+			workChan <- actor
+		}
+		// wait for all actors to be shut down
+		actorWg.Wait()
+		// instruct workers to shutdown
+		isDone = true
+		// wait for workers to shut down
+		workerWg.Wait()
+	}
+
+	log.Printf("(dispatcher) finished shutting down")
+}
+
 // actorMap stores actors for an actor system and allows thread-safe
 // get/set operations
 type actorMap struct {
@@ -137,6 +172,11 @@ func newActorMap(initialCapacity int) *actorMap {
 		actors: make(map[string]*Mailbox, initialCapacity),
 		mtx:    sync.Mutex{},
 	}
+}
+
+// Len returns the number of actors
+func (x *actorMap) Len() int {
+	return len(x.actors)
 }
 
 // Get retrieves an actor by ID

@@ -46,10 +46,16 @@ func Sample() {
 		senderID := "sender-1"
 		actorID := fmt.Sprintf("actor-%d", i)
 		go sendMessages(nd, senderID, actorID, time.Millisecond*10, metrics, 20*time.Second)
-		time.Sleep(3 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	nd.AwaitTermination()
+	time.Sleep(10 * time.Second)
+
+	nd.Shutdown()
+
+	for {
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func sendMessages(nd *actors.Dispatcher, senderID string, actorID string, sleepTime time.Duration, metrics *counter, lifespan time.Duration) {
@@ -60,7 +66,11 @@ func sendMessages(nd *actors.Dispatcher, senderID string, actorID string, sleepT
 	for time.Since(outerStart) < lifespan {
 		msg := wrapperspb.String(fmt.Sprintf("message %d from %s", loopCount, senderID))
 		start := time.Now()
-		_, _ = nd.Send(context.Background(), actorID, msg)
+		_, err := nd.Send(context.Background(), actorID, msg)
+		if err != nil {
+			fmt.Printf("err %s\n", err.Error())
+			return
+		}
 		metrics.Add(time.Since(start))
 		loopCount += 1
 		time.Sleep(sleepTime)
