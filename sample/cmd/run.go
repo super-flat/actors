@@ -89,7 +89,11 @@ func (c *counter) Add(t time.Duration) {
 
 func (c *counter) Report() {
 	c.mtx.Lock()
-	avg := c.duration.Milliseconds() / c.calls
-	log.Printf("[Metrics] avg=%dms, calls=%d\n", avg, c.calls)
+	if c.calls > 0 {
+		avg := c.duration.Milliseconds() / c.calls
+		log.Printf("[Metrics] avg=%dms, calls=%d\n", avg, c.calls)
+	} else {
+		log.Printf("[Metrics] no metrics\n")
+	}
 	c.mtx.Unlock()
 }
