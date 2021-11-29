@@ -3,6 +3,7 @@ package actors
 import (
 	"context"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -135,7 +136,28 @@ func (x *Mailbox) init(ctx context.Context) {
 	spanCtx, span := getSpanContext(ctx, "Actor.Mailbox.Init")
 	defer span.End()
 	// initialize the actor
-	if err := x.actor.Init(spanCtx); err != nil {
-		log.Panicf("[mailbox] failed to initialize actor, err=%s", err.Error())
+	loopCount := 0
+	for err := x.actor.Init(spanCtx); err != nil; {
+		if err := x.actor.Init(spanCtx); err != nil {
+			log.Panicf("[mailbox] failed to initialize actor, attempt=%d, err=%s", loopCount+1, err.Error())
+		}
+		// exponential backoff 10% more each time
+		x.sleepBackoff(5*time.Millisecond, 1*time.Second, 1.1, loopCount)
+		loopCount += 1
 	}
+}
+
+// sleepBackoff helps sleep with exponential backoff
+func (x *Mailbox) sleepBackoff(base time.Duration, maxBackoff time.Duration, factor float64, iteration int) {
+	// compute factor ^ iteration
+	backoffFactor := math.Pow(factor, float64(iteration))
+	// compute milliseconds to backoff
+	backoffMs := float64(base.Milliseconds()) * backoffFactor
+	backoffDuration := time.Duration(backoffMs) * time.Millisecond
+	// only backoff up to max backoff
+	if backoffDuration > maxBackoff {
+		backoffDuration = maxBackoff
+	}
+	// sleep
+	time.Sleep(backoffDuration)
 }
