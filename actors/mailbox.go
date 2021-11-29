@@ -43,10 +43,8 @@ func NewMailbox(ctx context.Context, ID string, actorFactory ActorFactory) *Mail
 		acceptingMessages: true,
 		actor:             actor,
 	}
-	// initialize the actor and start the actor loop
-	mailbox.selfInit(ctx)
-	// start the actor loop
-	go mailbox.receiverLoop()
+	// async initialize the actor and start processing messages
+	go mailbox.run(ctx)
 	// return the mailbox
 	return mailbox
 }
@@ -101,8 +99,17 @@ func (x *Mailbox) Stop() {
 	x.stop <- true
 }
 
-// the actor loop
-func (x *Mailbox) receiverLoop() {
+// run the actor loop
+func (x *Mailbox) run(bootCtx context.Context) {
+	// run the actor initialization
+	x.init(bootCtx)
+	// run the process loop
+	x.process()
+}
+
+// process incoming messages until stop signal
+func (x *Mailbox) process() {
+	// run the processing loop
 	for {
 		select {
 		case <-x.stop:
@@ -120,8 +127,8 @@ func (x *Mailbox) receiverLoop() {
 	}
 }
 
-// process runs in the background and processes all messages in the mailbox
-func (x *Mailbox) selfInit(ctx context.Context) {
+// init runs the actor initialization
+func (x *Mailbox) init(ctx context.Context) {
 	// get the observability span
 	spanCtx, span := getSpanContext(ctx, "Actor.Mailbox.Init")
 	defer span.End()
