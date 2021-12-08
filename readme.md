@@ -19,7 +19,7 @@ go run ./sample run
 - [x] Actor ref acting like erlang PID
 - [x] Tracing using open-telemetry
 - [x] Actors dispatcher
-- [] Supervisor strategy
-- [] Tell message pattern
-- [] Forward message pattern
-- [] Clustering
+- [ ] Supervisor strategy
+- [ ] Tell message pattern
+- [ ] Forward message pattern
+- [ ] Clustering
