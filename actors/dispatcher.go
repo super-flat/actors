@@ -46,14 +46,16 @@ func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispa
 // Send a message to a specific actor
 func (d *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message) (proto.Message, error) {
 	// get the observability span
+	spanCtx, span := getSpanContext(ctx, "Dispatcher.Send")
+	defer span.End()
 	if !d.isReceiving {
 		return nil, errors.New("not ready to process messages")
 	}
 	for {
 		// get the actor ref
-		actor := d.getActor(ctx, actorID)
+		actor := d.getActor(spanCtx, actorID)
 		// send the message, get the reply channel
-		success, replyChan := actor.Send(ctx, msg)
+		success, replyChan := actor.Send(spanCtx, msg)
 		if !success {
 			continue
 		}
