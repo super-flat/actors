@@ -25,3 +25,5 @@ go run ./sample run
 - [ ] Tell message pattern
 - [ ] Forward message pattern
 - [ ] Clustering
+- [ ] Unit tests
+- [ ] Benchmark tests
