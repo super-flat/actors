@@ -44,14 +44,14 @@ func NewActorDispatcher(actorFactory ActorFactory, opts ...DispatcherOpt) *Dispa
 }
 
 // Send a message to a specific actor
-func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message) (proto.Message, error) {
+func (d *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message) (proto.Message, error) {
 	// get the observability span
-	if !x.isReceiving {
+	if !d.isReceiving {
 		return nil, errors.New("not ready to process messages")
 	}
 	for {
 		// get the actor ref
-		actor := x.getActor(ctx, actorID)
+		actor := d.getActor(ctx, actorID)
 		// send the message, get the reply channel
 		success, replyChan := actor.Send(ctx, msg)
 		if !success {
@@ -61,48 +61,48 @@ func (x *Dispatcher) Send(ctx context.Context, actorID string, msg proto.Message
 		select {
 		case resp := <-replyChan:
 			return resp, nil
-		case <-time.After(x.askTimeout):
+		case <-time.After(d.askTimeout):
 			return nil, errors.New("command processing timeout")
 		}
 	}
 }
 
 // Start the Dispatcher
-func (x *Dispatcher) Start() {
-	if x.isReceiving {
+func (d *Dispatcher) Start() {
+	if d.isReceiving {
 		return
 	}
-	go x.passivateLoop()
-	x.isReceiving = true
+	go d.passivateLoop()
+	d.isReceiving = true
 }
 
 // getActor gets or creates an actor in a thread-safe manner
-func (x *Dispatcher) getActor(ctx context.Context, actorID string) *Mailbox {
+func (d *Dispatcher) getActor(ctx context.Context, actorID string) *ActorRef {
 	// get the observability span
 	spanCtx, span := getSpanContext(ctx, "Actor.Dispatcher.GetOrCreate")
 	defer span.End()
-	factory := func() *Mailbox {
-		return NewMailbox(spanCtx, actorID, x.actorFactory)
+	factory := func() *ActorRef {
+		return Spawn(spanCtx, actorID, d.actorFactory)
 	}
-	actor := x.actors.GetOrCreate(actorID, factory)
+	actor := d.actors.GetOrCreate(actorID, factory)
 	return actor
 }
 
 // passivateLoop runs in a goroutine and inactive actors
-func (x *Dispatcher) passivateLoop() {
+func (d *Dispatcher) passivateLoop() {
 	for {
-		time.Sleep(x.passivationFrequency)
+		time.Sleep(d.passivationFrequency)
 		// if there are items, start passivating
-		if x.isReceiving {
+		if d.isReceiving {
 			// loop over actors
-			for _, actor := range x.actors.GetAll() {
+			for _, actor := range d.actors.GetAll() {
 				idleTime := actor.IdleTime()
-				if idleTime >= x.maxActorInactivity {
+				if idleTime >= d.maxActorInactivity {
 					log.Printf("(dispatcher) actor %s idle %v seconds\n", actor.ID, idleTime.Round(time.Second).Seconds())
 					// stop the actor
 					actor.Stop()
 					// remove actor from map
-					x.actors.Delete(actor.ID)
+					d.actors.Delete(actor.ID)
 					log.Printf("(dispatcher) actor passivated, id=%s\n", actor.ID)
 				}
 			}
@@ -111,23 +111,23 @@ func (x *Dispatcher) passivateLoop() {
 }
 
 // Shutdown disables receiving new messages and shuts down all actors
-func (x *Dispatcher) Shutdown() {
+func (d *Dispatcher) Shutdown() {
 	log.Printf("(dispatcher) shutting down")
-	x.isReceiving = false
+	d.isReceiving = false
 	for {
 		// check there are actors to shut down
-		if x.actors.Len() == 0 {
+		if d.actors.Len() == 0 {
 			break
 		}
 		// get actors to delete
-		actors := x.actors.GetAll()
+		actors := d.actors.GetAll()
 		actorWg := &sync.WaitGroup{}
 		actorWg.Add(len(actors))
 		// create workers with channel to synchronize work
 		isDone := false
 		numWorkers := 10
 		workerWg := &sync.WaitGroup{}
-		workChan := make(chan (*Mailbox), numWorkers)
+		workChan := make(chan *ActorRef, numWorkers)
 		workerFn := func() {
 			workerWg.Add(1)
 			for {
@@ -136,7 +136,7 @@ func (x *Dispatcher) Shutdown() {
 				}
 				actor := <-workChan
 				actor.Stop()
-				x.actors.Delete(actor.ID)
+				d.actors.Delete(actor.ID)
 				actorWg.Done()
 			}
 			workerWg.Done()
@@ -162,14 +162,14 @@ func (x *Dispatcher) Shutdown() {
 // actorMap stores actors for an actor system and allows thread-safe
 // get/set operations
 type actorMap struct {
-	actors map[string]*Mailbox
+	actors map[string]*ActorRef
 	mtx    sync.Mutex
 }
 
 // newActorMap instantiates a new actor map
 func newActorMap(initialCapacity int) *actorMap {
 	return &actorMap{
-		actors: make(map[string]*Mailbox, initialCapacity),
+		actors: make(map[string]*ActorRef, initialCapacity),
 		mtx:    sync.Mutex{},
 	}
 }
@@ -180,7 +180,7 @@ func (x *actorMap) Len() int {
 }
 
 // Get retrieves an actor by ID
-func (x *actorMap) Get(id string) (value *Mailbox, exists bool) {
+func (x *actorMap) Get(id string) (value *ActorRef, exists bool) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	value, exists = x.actors[id]
@@ -188,7 +188,7 @@ func (x *actorMap) Get(id string) (value *Mailbox, exists bool) {
 }
 
 // GetOrCreate retrieves or creates an actor by ID
-func (x *actorMap) GetOrCreate(id string, factory func() *Mailbox) (value *Mailbox) {
+func (x *actorMap) GetOrCreate(id string, factory func() *ActorRef) (value *ActorRef) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	actor, exists := x.actors[id]
@@ -200,7 +200,7 @@ func (x *actorMap) GetOrCreate(id string, factory func() *Mailbox) (value *Mailb
 }
 
 // Set sets an actor in the map
-func (x *actorMap) Set(value *Mailbox) {
+func (x *actorMap) Set(value *ActorRef) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 	x.actors[value.ID] = value
@@ -214,8 +214,8 @@ func (x *actorMap) Delete(id string) {
 }
 
 // GetAll returns all actors as a slice
-func (x *actorMap) GetAll() []*Mailbox {
-	out := make([]*Mailbox, 0, len(x.actors))
+func (x *actorMap) GetAll() []*ActorRef {
+	out := make([]*ActorRef, 0, len(x.actors))
 	for _, actor := range x.actors {
 		out = append(out, actor)
 	}
