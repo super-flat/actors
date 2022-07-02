@@ -85,7 +85,7 @@ func (c *Cluster) Send(ctx context.Context, actorID string, message proto.Messag
 
 type PartitionsManager struct {
 	// partiCluster *parti.Cluster
-	partitions   map[uint32]*Dispatcher
+	dispatchers   map[uint32]*Dispatcher
 	mtx          *sync.Mutex
 	actorFactory ActorFactory
 }
