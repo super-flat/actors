@@ -49,6 +49,8 @@ func (c Cluster) hash(val string) uint32 {
 	return uint32(intHash.Int64())
 }
 
+// Send a message to an actor in the cluster, which will forward to remote
+// nodes as needed
 func (c *Cluster) Send(ctx context.Context, actorID string, message proto.Message) (proto.Message, error) {
 	// wrap msg in any
 	anyMsg, err := anypb.New(message)
