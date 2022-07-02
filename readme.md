@@ -27,3 +27,11 @@ go run ./sample run
 - [ ] Clustering
 - [ ] Unit tests
 - [ ] Benchmark tests
+
+## Clustering principles
+
+- actors belong to a specific shard and do not move between shards
+- shards have an ID (number)
+- shards can move between nodes
+- one shard coordinator per node, which contains many shards
+- v1 implementation will have a fixed number of shards and position actors in shards by taking hash modulo of the actor ID (like akka cluster or kafka partitions)
