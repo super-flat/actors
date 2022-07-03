@@ -3,8 +3,10 @@ package actors
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	actorsv1 "github.com/super-flat/actors/pb/actors"
 	parti "github.com/super-flat/parti/cluster"
@@ -105,14 +107,13 @@ func (c *PartitionsManager) Handle(ctx context.Context, partitionID uint32, msg 
 	if err != nil {
 		return nil, err
 	}
-	// get or create partition
-	c.mtx.Lock()
-	partition, partitionExists := c.dispatchers[partitionID]
-	if !partitionExists {
-		partition = NewActorDispatcher(c.actorFactory)
-		c.dispatchers[partitionID] = partition
+	// get a partition
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, time.Second*3)
+	partition := c.getPartition(timeoutCtx, partitionID)
+	timeoutCancel()
+	if partition == nil {
+		return nil, fmt.Errorf("timed out waiting for partition (%d) on this node", partitionID)
 	}
-	c.mtx.Unlock()
 	// send message to actor
 	response, err := partition.Send(ctx, envelope.GetActorId(), innerMsg)
 	if err != nil {
@@ -124,6 +125,36 @@ func (c *PartitionsManager) Handle(ctx context.Context, partitionID uint32, msg 
 		return nil, err
 	}
 	return responseAny, nil
+}
+
+// getPartition blocks until it finds a partition by ID or the context is cancelled
+func (c *PartitionsManager) getPartition(ctx context.Context, partitionID uint32) *Dispatcher {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			c.mtx.Lock()
+			partition, exists := c.dispatchers[partitionID]
+			c.mtx.Unlock()
+			if exists {
+				return partition
+			}
+		}
+	}
+
+}
+
+// StartPartition creates and starts a partition on this node, or no-op if
+// already exists
+func (c *PartitionsManager) StartPartition(ctx context.Context, partitionID uint32) error {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	if _, exists := c.dispatchers[partitionID]; !exists {
+		partition := NewActorDispatcher(c.actorFactory)
+		c.dispatchers[partitionID] = partition
+	}
+	return nil
 }
 
 // ShutdownPartition blocks until a partition is fully shut down on this node
