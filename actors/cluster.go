@@ -16,6 +16,12 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+const (
+	// how long to wait when getting a partition
+	// TODO: make configurable
+	partitionTimeout = time.Second * 3
+)
+
 // Cluster implements a clustered actor system across many nodes
 type Cluster struct {
 	partitionsManager *PartitionsManager
@@ -80,7 +86,6 @@ func (c *Cluster) Send(ctx context.Context, actorID string, message proto.Messag
 
 // PartitionsManager manages many actor dispatchers
 type PartitionsManager struct {
-	// partiCluster *parti.Cluster
 	dispatchers  map[uint32]*Dispatcher
 	mtx          *sync.Mutex
 	actorFactory ActorFactory
@@ -108,7 +113,7 @@ func (c *PartitionsManager) Handle(ctx context.Context, partitionID uint32, msg 
 		return nil, err
 	}
 	// get a partition
-	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, time.Second*3)
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, partitionTimeout)
 	partition := c.getPartition(timeoutCtx, partitionID)
 	timeoutCancel()
 	if partition == nil {
