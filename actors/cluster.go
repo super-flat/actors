@@ -114,8 +114,8 @@ func (c *PartitionsManager) Handle(ctx context.Context, partitionID uint32, msg 
 	}
 	// get a partition
 	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, partitionTimeout)
+	defer timeoutCancel()
 	partition := c.getPartition(timeoutCtx, partitionID)
-	timeoutCancel()
 	if partition == nil {
 		return nil, fmt.Errorf("timed out waiting for partition (%d) on this node", partitionID)
 	}
@@ -146,6 +146,9 @@ func (c *PartitionsManager) getPartition(ctx context.Context, partitionID uint32
 				return partition
 			}
 		}
+		// sleep between loops to free up CPU
+		// TODO: should this be an argument?
+		time.Sleep(50 * time.Millisecond)
 	}
 
 }
