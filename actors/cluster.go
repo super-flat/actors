@@ -14,12 +14,14 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+// Cluster implements a clustered actor system across many nodes
 type Cluster struct {
-	partitions     *PartitionsManager
-	partiCluster   *parti.Cluster
-	partitionCount uint32
+	partitionsManager *PartitionsManager
+	partiCluster      *parti.Cluster
+	partitioner       Partitioner
 }
 
+// NewCluster returns a new clustered actor system
 func NewCluster(raftPort uint16, discoveryPort uint16, partitionCount uint32, discoveryService discovery.Discovery) *Cluster {
 	partitionsManager := NewPartitionsManager()
 
@@ -31,22 +33,13 @@ func NewCluster(raftPort uint16, discoveryPort uint16, partitionCount uint32, di
 		discoveryService,
 	)
 
-	return &Cluster{
-		partitions:     partitionsManager,
-		partiCluster:   pCluster,
-		partitionCount: partitionCount,
-	}
-}
+	partitioner := NewHashModPartitioner(partitionCount)
 
-// hash a string value into a uint32
-// TODO: make this safer / smarter
-func (c Cluster) hash(val string) uint32 {
-	hash := sha256.Sum256([]byte(val))
-	intHash := new(big.Int)
-	intHash.SetBytes(hash[:])
-	partitionCount := big.NewInt(int64(c.partitionCount))
-	intHash = intHash.Mod(intHash, partitionCount)
-	return uint32(intHash.Int64())
+	return &Cluster{
+		partitionsManager: partitionsManager,
+		partiCluster:      pCluster,
+		partitioner:       partitioner,
+	}
 }
 
 // Send a message to an actor in the cluster, which will forward to remote
@@ -63,7 +56,7 @@ func (c *Cluster) Send(ctx context.Context, actorID string, message proto.Messag
 		Value:   anyMsg,
 	}
 	// compute partition
-	partitionID := c.hash(actorID)
+	partitionID := c.partitioner.Get(actorID)
 	// make parti send request
 	anyEnvelope, err := anypb.New(envelope)
 	if err != nil {
@@ -83,17 +76,19 @@ func (c *Cluster) Send(ctx context.Context, actorID string, message proto.Messag
 	return resp.GetResponse().UnmarshalNew()
 }
 
+// PartitionsManager manages many actor dispatchers
 type PartitionsManager struct {
 	// partiCluster *parti.Cluster
-	dispatchers   map[uint32]*Dispatcher
+	dispatchers  map[uint32]*Dispatcher
 	mtx          *sync.Mutex
 	actorFactory ActorFactory
 }
 
+// NewPartitionsManager returns a new PartitionsManager
 func NewPartitionsManager() *PartitionsManager {
 	cluster := &PartitionsManager{
-		partitions: make(map[uint32]*Dispatcher),
-		mtx:        &sync.Mutex{},
+		dispatchers: make(map[uint32]*Dispatcher),
+		mtx:         &sync.Mutex{},
 	}
 
 	return cluster
@@ -112,10 +107,10 @@ func (c *PartitionsManager) Handle(ctx context.Context, partitionID uint32, msg 
 	}
 	// get or create partition
 	c.mtx.Lock()
-	partition, partitionExists := c.partitions[partitionID]
+	partition, partitionExists := c.dispatchers[partitionID]
 	if !partitionExists {
 		partition = NewActorDispatcher(c.actorFactory)
-		c.partitions[partitionID] = partition
+		c.dispatchers[partitionID] = partition
 	}
 	c.mtx.Unlock()
 	// send message to actor
@@ -135,11 +130,38 @@ func (c *PartitionsManager) Handle(ctx context.Context, partitionID uint32, msg 
 func (c *PartitionsManager) ShutdownPartition(ctx context.Context, partitionID uint32) error {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
-	if partition, exists := c.partitions[partitionID]; exists {
+	if partition, exists := c.dispatchers[partitionID]; exists {
 		partition.Shutdown()
-		delete(c.partitions, partitionID)
+		delete(c.dispatchers, partitionID)
 	}
 	return nil
 }
 
+// Ensure that PartitionsManager implements parti's Handler interface
 var _ parti.Handler = &PartitionsManager{}
+
+type Partitioner interface {
+	// Get returns the partition for a given actorID
+	Get(actorID string) (partition uint32)
+}
+
+// HashModPartitioner implements a Partitioner that computes partition by
+// hashing the actor ID and computing the modulus of the number of partitions
+type HashModPartitioner struct {
+	numPartitions uint32
+}
+
+// NewHashModPartitioner returns a HashModPartitioner
+func NewHashModPartitioner(numPartitions uint32) *HashModPartitioner {
+	return &HashModPartitioner{numPartitions: numPartitions}
+}
+
+// Get returns the partition for a given actorID
+func (d HashModPartitioner) Get(actorID string) uint32 {
+	hash := sha256.Sum256([]byte(actorID))
+	intHash := new(big.Int)
+	intHash.SetBytes(hash[:])
+	partitionCount := big.NewInt(int64(d.numPartitions))
+	intHash = intHash.Mod(intHash, partitionCount)
+	return uint32(intHash.Int64())
+}
