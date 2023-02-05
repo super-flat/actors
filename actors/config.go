@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tochemey/goakt/log"
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
-	"github.com/tochemey/goakt/telemetry"
+	"github.com/super-flat/actors/log"
+	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/telemetry"
 )
 
 var (

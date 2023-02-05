@@ -7,9 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
-	"github.com/tochemey/goakt/persistence"
-	testpb "github.com/tochemey/goakt/test/data/pb/v1"
+	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/persistence"
+	testpb "github.com/super-flat/actors/test/data/pb/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"

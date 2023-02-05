@@ -1,4 +1,4 @@
-module github.com/tochemey/goakt
+module github.com/super-flat/actors
 
 go 1.19
 

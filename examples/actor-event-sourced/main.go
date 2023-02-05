@@ -9,12 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	goakt "github.com/tochemey/goakt/actors"
-	"github.com/tochemey/goakt/eventsourcing"
-	samplepb "github.com/tochemey/goakt/examples/protos/pb/v1"
-	"github.com/tochemey/goakt/log"
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
-	"github.com/tochemey/goakt/persistence/plugins/memory"
+	goakt "github.com/super-flat/actors/actors"
+	"github.com/super-flat/actors/eventsourcing"
+	samplepb "github.com/super-flat/actors/examples/protos/pb/v1"
+	"github.com/super-flat/actors/log"
+	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/persistence/plugins/memory"
 	"google.golang.org/protobuf/proto"
 )
 

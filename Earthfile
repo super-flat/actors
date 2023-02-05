@@ -41,7 +41,7 @@ local-test:
 
     SAVE ARTIFACT coverage.out AS LOCAL coverage.out
 
-protogen:
+pb:
     # copy the proto files to generate
     COPY --dir protos/ ./
     COPY buf.work.yaml buf.gen.yaml ./
@@ -49,12 +49,12 @@ protogen:
     # generate the pbs
     RUN buf generate \
             --template buf.gen.yaml \
-            --path protos/internal/goakt
+            --path protos/internal/actors
 
     # save artifact to
     SAVE ARTIFACT gen gen AS LOCAL pb
 
-testprotogen:
+test-pb:
     # copy the proto files to generate
     COPY --dir protos/ ./
     COPY buf.work.yaml buf.gen.yaml ./

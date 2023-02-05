@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tochemey/goakt/pkg/postgres"
+	"github.com/super-flat/actors/pkg/postgres"
 )
 
 var testContainer *postgres.TestContainer

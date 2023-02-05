@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-memdb"
 	"github.com/pkg/errors"
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
-	"github.com/tochemey/goakt/persistence"
-	"github.com/tochemey/goakt/telemetry"
+	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/persistence"
+	"github.com/super-flat/actors/telemetry"
 	"go.uber.org/atomic"
 	"google.golang.org/protobuf/proto"
 )

@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 
-	"github.com/tochemey/goakt/pkg/postgres"
+	"github.com/super-flat/actors/pkg/postgres"
 )
 
 // SchemaUtils help create the various test tables in unit/integration tests

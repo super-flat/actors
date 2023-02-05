@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tochemey/goakt/log"
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
+	"github.com/super-flat/actors/log"
+	pb "github.com/super-flat/actors/pb/actors/v1"
 )
 
 func TestPIDOptions(t *testing.T) {

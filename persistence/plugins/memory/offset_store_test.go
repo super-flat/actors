@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
-	"github.com/tochemey/goakt/persistence"
+	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/persistence"
 	"google.golang.org/protobuf/proto"
 )
 

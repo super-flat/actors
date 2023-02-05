@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tochemey/goakt/log"
+	"github.com/super-flat/actors/log"
 )
 
 func TestNewActorSystem(t *testing.T) {

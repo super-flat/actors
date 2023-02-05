@@ -1,8 +1,8 @@
 package projection
 
 import (
-	"github.com/tochemey/goakt/log"
-	"github.com/tochemey/goakt/persistence"
+	"github.com/super-flat/actors/log"
+	"github.com/super-flat/actors/persistence"
 )
 
 // Config defines a projection config

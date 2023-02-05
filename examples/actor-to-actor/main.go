@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	goakt "github.com/tochemey/goakt/actors"
-	samplepb "github.com/tochemey/goakt/examples/protos/pb/v1"
-	"github.com/tochemey/goakt/log"
+	goakt "github.com/super-flat/actors/actors"
+	samplepb "github.com/super-flat/actors/examples/protos/pb/v1"
+	"github.com/super-flat/actors/log"
 	"go.uber.org/atomic"
 )
 

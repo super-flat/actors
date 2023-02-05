@@ -3,7 +3,7 @@ package actors
 import (
 	"context"
 
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
+	pb "github.com/super-flat/actors/pb/actors/v1"
 )
 
 func (p *pid) supervise(cid PID, watcher *Watcher) {

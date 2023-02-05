@@ -7,9 +7,9 @@ import (
 
 	cmp "github.com/orcaman/concurrent-map/v2"
 	"github.com/pkg/errors"
-	"github.com/tochemey/goakt/log"
-	"github.com/tochemey/goakt/pkg/eventbus"
-	"github.com/tochemey/goakt/telemetry"
+	"github.com/super-flat/actors/log"
+	"github.com/super-flat/actors/pkg/eventbus"
+	"github.com/super-flat/actors/telemetry"
 	"go.opentelemetry.io/otel/metric/instrument"
 	"go.uber.org/atomic"
 )

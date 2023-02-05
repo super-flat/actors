@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tochemey/goakt/log"
-	testspb "github.com/tochemey/goakt/test/data/pb/v1"
+	"github.com/super-flat/actors/log"
+	testspb "github.com/super-flat/actors/test/data/pb/v1"
 )
 
 type BenchActor struct {

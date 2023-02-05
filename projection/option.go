@@ -3,7 +3,7 @@ package projection
 import (
 	"time"
 
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
+	pb "github.com/super-flat/actors/pb/actors/v1"
 )
 
 // Option is the interface that applies a configuration option.

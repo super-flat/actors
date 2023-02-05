@@ -3,7 +3,7 @@ package persistence
 import (
 	"context"
 
-	pb "github.com/tochemey/goakt/pb/goakt/v1"
+	pb "github.com/super-flat/actors/pb/actors/v1"
 )
 
 // JournalStore represents the persistence store.
