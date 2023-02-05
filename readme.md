@@ -1,6 +1,6 @@
 # Actors
 [![build](https://img.shields.io/github/actions/workflow/status/super-flat/actors/build.yml?branch=main)](https://github.com/Tochemey/goakt/actions/workflows/build.yml)
-[![codecov](https://codecov.io/gh/Tochemey/goakt/branch/main/graph/badge.svg?token=J0p9MzwSRH)](https://codecov.io/gh/Tochemey/goakt)
+[![codecov](https://codecov.io/gh/super-flat/actors/branch/main/graph/badge.svg?token=RLXOZTBMUF)](https://codecov.io/gh/super-flat/actors)
 
 Minimal actor framework to build reactive and distributed system in golang using protocol buffers.
 
