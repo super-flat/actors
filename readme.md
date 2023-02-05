@@ -33,7 +33,7 @@ Also, check reference section at the end of the post for more material regarding
 
 ## Installation
 ```bash
-go get github.com/Tochemey/goakt
+go get github.com/super-flat/actors
 ```
 
 ## Example
