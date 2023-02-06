@@ -8,7 +8,6 @@ import (
 	cmp "github.com/orcaman/concurrent-map/v2"
 	"github.com/pkg/errors"
 	"github.com/super-flat/actors/log"
-	"github.com/super-flat/actors/pkg/eventbus"
 	"github.com/super-flat/actors/telemetry"
 	"go.opentelemetry.io/otel/metric/instrument"
 	"go.uber.org/atomic"
@@ -35,8 +34,6 @@ type ActorSystem interface {
 	StopActor(ctx context.Context, kind, id string) error
 	// RestartActor restarts a given actor in the system
 	RestartActor(ctx context.Context, kind, id string) (PID, error)
-	// EventBus returns the actor system event bus
-	EventBus() eventbus.EventBus
 	// NumActors returns the total number of active actors in the system
 	NumActors() uint64
 }
@@ -58,7 +55,6 @@ type actorSystem struct {
 
 	hasStarted *atomic.Bool
 
-	eventBus eventbus.EventBus
 	// observability settings
 	telemetry *telemetry.Telemetry
 }
@@ -83,17 +79,11 @@ func NewActorSystem(config *Config) (ActorSystem, error) {
 			logger:     config.Logger(),
 			config:     config,
 			hasStarted: atomic.NewBool(false),
-			eventBus:   eventbus.New(),
 			telemetry:  config.telemetry,
 		}
 	})
 
 	return cache, nil
-}
-
-// EventBus returns the actor system event streams
-func (a *actorSystem) EventBus() eventbus.EventBus {
-	return a.eventBus
 }
 
 // NumActors returns the total number of active actors in the system
