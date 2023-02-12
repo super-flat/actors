@@ -241,6 +241,12 @@ func (a *actorSystem) Start(ctx context.Context) error {
 	defer span.End()
 	// set the has started to true
 	a.hasStarted.Store(true)
+
+	// start remoting when remoting is enabled
+	if err := a.startRemoting(ctx); err != nil {
+		return err
+	}
+
 	// start the metrics service
 	// register metrics. However, we don't panic when we fail to register
 	// we just log it for now
@@ -259,6 +265,11 @@ func (a *actorSystem) Stop(ctx context.Context) error {
 	defer span.End()
 	a.logger.Infof("%s System is shutting down on Node=%s...", a.name, a.nodeAddr)
 
+	// stop remoting service when set
+	if a.remotingService != nil {
+		a.remotingService.Stop(ctx)
+	}
+
 	// short-circuit the shutdown process when there are no online actors
 	if len(a.Actors()) == 0 {
 		a.logger.Info("No online actors to shutdown. Shutting down successfully done")
@@ -272,6 +283,9 @@ func (a *actorSystem) Stop(ctx context.Context) error {
 		}
 		a.actors.Remove(string(actor.Address()))
 	}
+
+	// reset the actor system
+	a.reset()
 
 	return nil
 }
