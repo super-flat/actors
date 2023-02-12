@@ -71,6 +71,11 @@ func TestOptions(t *testing.T) {
 			option:         WithSupervisorStrategy(pb.StrategyDirective_RESTART_DIRECTIVE),
 			expectedConfig: Config{supervisorStrategy: pb.StrategyDirective_RESTART_DIRECTIVE},
 		},
+		{
+			name:           "WithRemoting",
+			option:         WithRemoting(),
+			expectedConfig: Config{remotingEnabled: true},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -10,15 +10,23 @@ import (
 	"github.com/pkg/errors"
 	"github.com/super-flat/actors/log"
 	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/pkg/grpc"
 	"github.com/super-flat/actors/pkg/tools"
 	"github.com/super-flat/actors/telemetry"
-	"go.opentelemetry.io/otel/metric/instrument"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/atomic"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // NoSender means that there is no sender
 var NoSender PID
+
+type watcher struct {
+	Parent  PID        // the Parent of the actor watching
+	ErrChan chan error // the channel where to pass error message
+	Done    chan Unit
+}
 
 // PID defines the various actions one can perform on a given actor
 type PID interface {
@@ -45,14 +53,16 @@ type PID interface {
 	ActorSystem() ActorSystem
 	// Address returns the address of the actor
 	Address() Address
-	// Watchers returns the list of watchers
-	Watchers() *tools.ConcurrentSlice[*Watcher]
 	// LocalID returns the actor unique identifier
 	LocalID() *LocalID
 	// SendAsync sends an asynchronous message to another PID
 	SendAsync(ctx context.Context, to PID, message proto.Message) error
 	// SendSync sends a synchronous message to another actor and expect a response.
 	SendSync(ctx context.Context, to PID, message proto.Message) (response proto.Message, err error)
+	// RemoteSendAsync sends a message to an actor remotely without expecting any reply
+	RemoteSendAsync(ctx context.Context, to *pb.Address, message proto.Message) error
+	// RemoteSendSync sends a synchronous message to another actor remotely and expect a response.
+	RemoteSendSync(ctx context.Context, to *pb.Address, message proto.Message) (response proto.Message, err error)
 	// RestartCount returns the number of times the actor has restarted
 	RestartCount(ctx context.Context) uint64
 	// MailboxSize returns the mailbox size a given time
@@ -72,6 +82,8 @@ type PID interface {
 	unsetBehaviorStacked()
 	// resetBehavior is a utility function resets the actor behavior
 	resetBehavior()
+	// watchersList returns the list of watchers
+	watchersList() *tools.ConcurrentSlice[*watcher]
 }
 
 // pid specifies an actor unique process
@@ -116,7 +128,7 @@ type pid struct {
 	haltPassivationLnr chan Unit
 
 	// set of watchers watching the given actor
-	watchers *tools.ConcurrentSlice[*Watcher]
+	watchers *tools.ConcurrentSlice[*watcher]
 
 	// hold the list of the children
 	children *pidMap
@@ -177,7 +189,7 @@ func newPID(ctx context.Context, actor Actor, opts ...pidOption) *pid {
 		mu:                     sync.RWMutex{},
 		children:               newPIDMap(10),
 		supervisorStrategy:     pb.StrategyDirective_STOP_DIRECTIVE,
-		watchers:               tools.NewConcurrentSlice[*Watcher](),
+		watchers:               tools.NewConcurrentSlice[*watcher](),
 		telemetry:              telemetry.New(),
 	}
 	// set the custom options to override the default values
@@ -482,6 +494,73 @@ func (p *pid) SendAsync(ctx context.Context, to PID, message proto.Message) erro
 	return nil
 }
 
+// RemoteSendAsync sends a message to an actor remotely without expecting any reply
+func (p *pid) RemoteSendAsync(ctx context.Context, to *pb.Address, message proto.Message) error {
+	// add a span context
+	ctx, span := telemetry.SpanContext(ctx, "RemoteSendAsync")
+	defer span.End()
+
+	// marshal the message
+	marshaled, err := anypb.New(message)
+	if err != nil {
+		return err
+	}
+
+	// create an instance of remote client service
+	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", to.GetHost(), to.GetPort()))
+	remoteClient := pb.NewRemotingServiceClient(rpcConn)
+	// prepare the rpcRequest to send
+	request := &pb.RemoteSendAsyncRequest{
+		Address: to,
+		Message: marshaled,
+	}
+	// send the message and handle the error in case there is any
+	if _, err := remoteClient.RemoteSendAsync(ctx, request); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RemoteSendSync sends a synchronous message to another actor remotely and expect a response.
+func (p *pid) RemoteSendSync(ctx context.Context, to *pb.Address, message proto.Message) (response proto.Message, err error) {
+	// add a span context
+	ctx, span := telemetry.SpanContext(ctx, "RemoteSendAsync")
+	defer span.End()
+
+	// marshal the message
+	marshaled, err := anypb.New(message)
+	if err != nil {
+		return nil, err
+	}
+
+	// construct the from address
+	from := &pb.Address{
+		ActorSystem: p.ActorSystem().Name(),
+		Host:        p.ActorSystem().Host(),
+		Port:        int32(p.ActorSystem().Port()),
+		Kind:        p.LocalID().Kind(),
+		Id:          p.LocalID().ID(),
+	}
+
+	// create an instance of remote client service
+	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", to.GetHost(), to.GetPort()))
+	remoteClient := pb.NewRemotingServiceClient(rpcConn)
+	// prepare the rpcRequest to send
+	rpcRequest := &pb.RemoteSendSyncRequest{
+		Sender:   from,
+		Receiver: to,
+		Message:  marshaled,
+	}
+	// send the request
+	rpcResponse, rpcErr := remoteClient.RemoteSendSync(ctx, rpcRequest)
+	// handle the error
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	return rpcResponse.GetMessage(), nil
+}
+
 // Shutdown gracefully shuts down the given actor
 // All current messages in the mailbox will be processed before the actor shutdown after a period of time
 // that can be configured. All child actors will be gracefully shutdown.
@@ -517,20 +596,20 @@ func (p *pid) Shutdown(ctx context.Context) error {
 }
 
 // Watchers return the list of watchers
-func (p *pid) Watchers() *tools.ConcurrentSlice[*Watcher] {
+func (p *pid) watchersList() *tools.ConcurrentSlice[*watcher] {
 	return p.watchers
 }
 
 // Watch a pid for errors, and send on the returned channel if an error occurred
 func (p *pid) Watch(pid PID) {
 	// create a watcher
-	w := &Watcher{
+	w := &watcher{
 		Parent:  p,
 		ErrChan: make(chan error, 1),
 		Done:    make(chan Unit, 1),
 	}
 	// add the watcher to the list of watchers
-	pid.Watchers().Append(w)
+	pid.watchersList().Append(w)
 	// supervise the PID
 	go p.supervise(pid, w)
 }
@@ -538,7 +617,7 @@ func (p *pid) Watch(pid PID) {
 // UnWatch stops watching a given actor
 func (p *pid) UnWatch(pid PID) {
 	// iterate the watchers list
-	for item := range pid.Watchers().Iter() {
+	for item := range pid.watchersList().Iter() {
 		// grab the item value
 		w := item.Value
 		// locate the given watcher
@@ -546,7 +625,7 @@ func (p *pid) UnWatch(pid PID) {
 			// stop the watching go routine
 			w.Done <- Unit{}
 			// remove the watcher from the list
-			pid.Watchers().Delete(item.Index)
+			pid.watchersList().Delete(item.Index)
 			break
 		}
 	}
@@ -748,15 +827,84 @@ func (p *pid) registerMetrics() error {
 	}
 
 	// register the metrics
-	return meter.RegisterCallback([]instrument.Asynchronous{
-		metrics.ReceivedCount,
+	_, err = meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
+		observer.ObserveInt64(metrics.ReceivedCount, int64(p.ReceivedCount(ctx)))
+		observer.ObserveInt64(metrics.PanicCount, int64(p.ErrorsCount(ctx)))
+		observer.ObserveInt64(metrics.RestartedCount, int64(p.RestartCount(ctx)))
+		observer.ObserveInt64(metrics.MailboxSize, int64(p.MailboxSize(ctx)))
+		return nil
+	}, metrics.ReceivedCount,
 		metrics.RestartedCount,
 		metrics.PanicCount,
-		metrics.MailboxSize,
-	}, func(ctx context.Context) {
-		metrics.ReceivedCount.Observe(ctx, int64(p.ReceivedCount(ctx)))
-		metrics.PanicCount.Observe(ctx, int64(p.ErrorsCount(ctx)))
-		metrics.RestartedCount.Observe(ctx, int64(p.RestartCount(ctx)))
-		metrics.MailboxSize.Observe(ctx, int64(p.MailboxSize(ctx)))
-	})
+		metrics.MailboxSize)
+
+	return err
+}
+
+// receive handles every mail in the actor mailbox
+func (p *pid) receive() {
+	// run the processing loop
+	for {
+		select {
+		case <-p.shutdownSignal:
+			return
+		case received := <-p.mailbox:
+			func() {
+				// recover from a panic attack
+				defer func() {
+					if r := recover(); r != nil {
+						// construct the error to return
+						err := fmt.Errorf("%s", r)
+						// send the error to the watchers
+						for item := range p.watchers.Iter() {
+							item.Value.ErrChan <- err
+						}
+						// increase the panic counter
+						p.panicCounter.Inc()
+					}
+				}()
+				// send the message to the current actor behavior
+				if behavior, ok := p.behaviorStack.Peek(); ok {
+					behavior(received)
+				}
+			}()
+		}
+	}
+}
+
+// supervise watches for child actor's failure and act based upon the supervisory strategy
+func (p *pid) supervise(cid PID, watcher *watcher) {
+	for {
+		select {
+		case <-watcher.Done:
+			return
+		case err := <-watcher.ErrChan:
+			p.logger.Errorf("child actor=%s is panicking: Err=%v", cid.Address(), err)
+			switch p.supervisorStrategy {
+			case pb.StrategyDirective_STOP_DIRECTIVE:
+				// shutdown the actor and panic in case of error
+				if err := cid.Shutdown(context.Background()); err != nil {
+					panic(err)
+				}
+				// unwatch the given actor
+				p.UnWatch(cid)
+				// remove the actor from the children map
+				p.children.Delete(cid.Address())
+			case pb.StrategyDirective_RESTART_DIRECTIVE:
+				// restart the actor
+				if err := cid.Restart(context.Background()); err != nil {
+					panic(err)
+				}
+			default:
+				// shutdown the actor and panic in case of error
+				if err := cid.Shutdown(context.Background()); err != nil {
+					panic(err)
+				}
+				// unwatch the given actor
+				p.UnWatch(cid)
+				// remove the actor from the children map
+				p.children.Delete(cid.Address())
+			}
+		}
+	}
 }
