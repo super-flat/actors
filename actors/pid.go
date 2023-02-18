@@ -6,6 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/cenkalti/backoff"
 	"github.com/pkg/errors"
 	"github.com/super-flat/actors/log"
@@ -22,7 +25,7 @@ import (
 // NoSender means that there is no sender
 var NoSender PID
 
-type watcher struct {
+type watchMan struct {
 	Parent  PID        // the Parent of the actor watching
 	ErrChan chan error // the channel where to pass error message
 	Done    chan Unit
@@ -42,7 +45,7 @@ type PID interface {
 	// at a given point in time while the actor heart is still beating
 	ErrorsCount(ctx context.Context) uint64
 	// SpawnChild creates a child actor
-	SpawnChild(ctx context.Context, kind, id string, actor Actor) (PID, error)
+	SpawnChild(ctx context.Context, name string, actor Actor) (PID, error)
 	// Restart restarts the actor
 	Restart(ctx context.Context) error
 	// Watch an actor
@@ -51,10 +54,8 @@ type PID interface {
 	UnWatch(pid PID)
 	// ActorSystem returns the underlying actor system
 	ActorSystem() ActorSystem
-	// Address returns the address of the actor
-	Address() Address
-	// LocalID returns the actor unique identifier
-	LocalID() *LocalID
+	// ActorPath returns the path of the actor
+	ActorPath() *Path
 	// SendAsync sends an asynchronous message to another PID
 	SendAsync(ctx context.Context, to PID, message proto.Message) error
 	// SendSync sends a synchronous message to another actor and expect a response.
@@ -63,6 +64,9 @@ type PID interface {
 	RemoteSendAsync(ctx context.Context, to *pb.Address, message proto.Message) error
 	// RemoteSendSync sends a synchronous message to another actor remotely and expect a response.
 	RemoteSendSync(ctx context.Context, to *pb.Address, message proto.Message) (response proto.Message, err error)
+	// RemoteLookup look for an actor address on a remote node. If the actorSystem is nil then the lookup will be done
+	// using the same actor system as the PID actor system
+	RemoteLookup(ctx context.Context, host string, port int, name string, actorSystem *string) (addr *pb.Address, err error)
 	// RestartCount returns the number of times the actor has restarted
 	RestartCount(ctx context.Context) uint64
 	// MailboxSize returns the mailbox size a given time
@@ -82,8 +86,8 @@ type PID interface {
 	unsetBehaviorStacked()
 	// resetBehavior is a utility function resets the actor behavior
 	resetBehavior()
-	// watchersList returns the list of watchers
-	watchersList() *tools.ConcurrentSlice[*watcher]
+	// watchers returns the list of watchMen
+	watchers() *tools.ConcurrentSlice[*watchMan]
 }
 
 // pid specifies an actor unique process
@@ -91,11 +95,8 @@ type PID interface {
 type pid struct {
 	Actor
 
-	// addr represents the actor unique address
-	addr Address
-
-	// actor unique identifier
-	id *LocalID
+	// specifies the actor path
+	actorPath *Path
 
 	// helps determine whether the actor should handle messages or not.
 	isOnline bool
@@ -127,8 +128,8 @@ type pid struct {
 	shutdownSignal     chan Unit
 	haltPassivationLnr chan Unit
 
-	// set of watchers watching the given actor
-	watchers *tools.ConcurrentSlice[*watcher]
+	// set of watchMen watching the given actor
+	watchMen *tools.ConcurrentSlice[*watchMan]
 
 	// hold the list of the children
 	children *pidMap
@@ -162,7 +163,7 @@ type pid struct {
 var _ PID = (*pid)(nil)
 
 // newPID creates a new pid
-func newPID(ctx context.Context, actor Actor, opts ...pidOption) *pid {
+func newPID(ctx context.Context, actorPath *Path, actor Actor, opts ...pidOption) *pid {
 	// add a span context
 	ctx, span := telemetry.SpanContext(ctx, "NewPID")
 	defer span.End()
@@ -170,7 +171,6 @@ func newPID(ctx context.Context, actor Actor, opts ...pidOption) *pid {
 	// create the actor PID
 	pid := &pid{
 		Actor:                  actor,
-		addr:                   "",
 		isOnline:               false,
 		lastProcessingTime:     atomic.Time{},
 		passivateAfter:         2 * time.Minute,
@@ -189,18 +189,14 @@ func newPID(ctx context.Context, actor Actor, opts ...pidOption) *pid {
 		mu:                     sync.RWMutex{},
 		children:               newPIDMap(10),
 		supervisorStrategy:     pb.StrategyDirective_STOP_DIRECTIVE,
-		watchers:               tools.NewConcurrentSlice[*watcher](),
+		watchMen:               tools.NewConcurrentSlice[*watchMan](),
 		telemetry:              telemetry.New(),
+		actorPath:              actorPath,
 	}
+
 	// set the custom options to override the default values
 	for _, opt := range opts {
 		opt(pid)
-	}
-
-	// let us set the addr when the actor system and kind are set
-	if pid.system != nil && pid.LocalID().Kind() != "" {
-		// create the address of the given actor and set it
-		pid.addr = GetAddress(pid.system, pid.LocalID().Kind(), pid.LocalID().ID())
 	}
 
 	// initialize the actor and init processing messages
@@ -221,7 +217,7 @@ func newPID(ctx context.Context, actor Actor, opts ...pidOption) *pid {
 	// we just log it for now
 	// TODO decide what to do when we fail to register the metrics or export the metrics registration as public
 	if err := pid.registerMetrics(); err != nil {
-		pid.logger.Error(errors.Wrapf(err, "failed to register actor=%s metrics", pid.Address()))
+		pid.logger.Error(errors.Wrapf(err, "failed to register actor=%s metrics", pid.ActorPath().String()))
 	}
 
 	// return the actor reference
@@ -237,16 +233,6 @@ func (p *pid) Children(ctx context.Context) []PID {
 	kiddos := p.children.List()
 	p.mu.Unlock()
 	return kiddos
-}
-
-// LocalID returns the unique actor identifier
-func (p *pid) LocalID() *LocalID {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.id == nil {
-		return &LocalID{}
-	}
-	return p.id
 }
 
 // IsOnline returns true when the actor is alive ready to process messages and false
@@ -266,12 +252,12 @@ func (p *pid) ActorSystem() ActorSystem {
 	return sys
 }
 
-// Address return the address of the actor
-func (p *pid) Address() Address {
+// ActorPath returns the path of the actor
+func (p *pid) ActorPath() *Path {
 	p.mu.Lock()
-	address := p.addr
+	path := p.actorPath
 	p.mu.Unlock()
-	return address
+	return path
 }
 
 // Restart restarts the actor. This call can panic which is the expected behaviour.
@@ -281,7 +267,7 @@ func (p *pid) Restart(ctx context.Context) error {
 	ctx, span := telemetry.SpanContext(ctx, "Restart")
 	defer span.End()
 	// first check whether we have an empty PID
-	if p == nil || p.addr == "" {
+	if p == nil || p.actorPath == nil {
 		return ErrUndefinedActor
 	}
 	// check whether the actor is ready and stop it
@@ -324,7 +310,7 @@ func (p *pid) Restart(ctx context.Context) error {
 }
 
 // SpawnChild creates a child actor and start watching it for error
-func (p *pid) SpawnChild(ctx context.Context, kind, id string, actor Actor) (PID, error) {
+func (p *pid) SpawnChild(ctx context.Context, name string, actor Actor) (PID, error) {
 	// add a span context
 	ctx, span := telemetry.SpanContext(ctx, "SpawnChild")
 	defer span.End()
@@ -333,10 +319,11 @@ func (p *pid) SpawnChild(ctx context.Context, kind, id string, actor Actor) (PID
 		return nil, ErrNotReady
 	}
 
-	// create the address of the given actor
-	addr := GetAddress(p.ActorSystem(), kind, id)
+	// create the child actor path
+	childActorPath := NewPath(name, p.ActorPath().Address()).WithParent(p.ActorPath())
+
 	// check whether the child actor already exist and just return the PID
-	if cid, ok := p.children.Get(addr); ok {
+	if cid, ok := p.children.Get(name); ok {
 		// check whether the actor is stopped
 		if !cid.IsOnline() {
 			// then reboot it
@@ -348,16 +335,16 @@ func (p *pid) SpawnChild(ctx context.Context, kind, id string, actor Actor) (PID
 	}
 
 	// create the child pid
-	cid := newPID(ctx, actor,
+	cid := newPID(ctx,
+		childActorPath,
+		actor,
 		withInitMaxRetries(p.initMaxRetries),
 		withPassivationAfter(p.passivateAfter),
 		withSendReplyTimeout(p.sendReplyTimeout),
 		withCustomLogger(p.logger),
 		withActorSystem(p.system),
-		withLocalID(kind, id),
 		withSupervisorStrategy(p.supervisorStrategy),
-		withShutdownTimeout(p.shutdownTimeout),
-		withAddress(addr))
+		withShutdownTimeout(p.shutdownTimeout))
 
 	// add the pid to the map
 	p.children.Set(cid)
@@ -494,6 +481,46 @@ func (p *pid) SendAsync(ctx context.Context, to PID, message proto.Message) erro
 	return nil
 }
 
+// RemoteLookup look for an actor address on a remote node. If the actorSystem is nil then the lookup will be done
+// using the same actor system as the PID actor system
+func (p *pid) RemoteLookup(ctx context.Context, host string, port int, name string, actorSystem *string) (addr *pb.Address, err error) {
+	// add a span context
+	ctx, span := telemetry.SpanContext(ctx, "RemoteLookup")
+	defer span.End()
+
+	// create an instance of remote client service
+	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", host, port))
+	remoteClient := pb.NewRemotingServiceClient(rpcConn)
+
+	// set the actor system to the PID
+	sys := p.ActorSystem().Name()
+	if actorSystem != nil {
+		sys = *actorSystem
+	}
+
+	// prepare the request to send
+	request := &pb.RemoteLookupRequest{
+		ActorSystem: sys,
+		Host:        host,
+		Port:        int32(port),
+		Name:        name,
+	}
+	// send the message and handle the error in case there is any
+	response, err := remoteClient.RemoteLookup(ctx, request)
+	// we know the error will always be a grpc error
+	if err != nil {
+		// get the status error
+		s := status.Convert(err)
+		if s.Code() == codes.NotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// return the response
+	return response.GetAddress(), nil
+}
+
 // RemoteSendAsync sends a message to an actor remotely without expecting any reply
 func (p *pid) RemoteSendAsync(ctx context.Context, to *pb.Address, message proto.Message) error {
 	// add a span context
@@ -535,11 +562,11 @@ func (p *pid) RemoteSendSync(ctx context.Context, to *pb.Address, message proto.
 
 	// construct the from address
 	from := &pb.Address{
-		ActorSystem: p.ActorSystem().Name(),
-		Host:        p.ActorSystem().Host(),
-		Port:        int32(p.ActorSystem().Port()),
-		Kind:        p.LocalID().Kind(),
-		Id:          p.LocalID().ID(),
+		ActorSystem: p.ActorPath().Address().System(),
+		Host:        p.ActorPath().Address().Host(),
+		Port:        int32(p.ActorPath().Address().Port()),
+		Name:        p.ActorPath().Name(),
+		Id:          p.ActorPath().ID().String(),
 	}
 
 	// create an instance of remote client service
@@ -575,7 +602,7 @@ func (p *pid) Shutdown(ctx context.Context) error {
 
 	// check whether the actor is still alive. Maybe it has been passivated already
 	if !p.IsOnline() {
-		p.logger.Infof("Actor=%s is offline. Maybe it has been passivated or stopped already", p.Address())
+		p.logger.Infof("Actor=%s is offline. Maybe it has been passivated or stopped already", p.ActorPath().String())
 		return nil
 	}
 
@@ -583,52 +610,52 @@ func (p *pid) Shutdown(ctx context.Context) error {
 	p.stop(ctx)
 
 	// add some logging
-	p.logger.Info("Shutdown process is on going for actor=%s...", p.Address())
+	p.logger.Info("Shutdown process is on going for actor=%s...", p.ActorPath().String())
 	// signal we are shutting down to stop processing messages
 	p.shutdownSignal <- Unit{}
 	// perform some cleanup with the actor
 	if err := p.Actor.PostStop(ctx); err != nil {
-		p.logger.Error(fmt.Errorf("failed to stop the underlying receiver for actor=%s. Cause:%v", p.addr, err))
+		p.logger.Error(fmt.Errorf("failed to stop the underlying receiver for actor=%s. Cause:%v", p.ActorPath().String(), err))
 		return err
 	}
-	p.logger.Infof("Actor=%s successfully shutdown", p.Address())
+	p.logger.Infof("Actor=%s successfully shutdown", p.ActorPath().String())
 	return nil
-}
-
-// Watchers return the list of watchers
-func (p *pid) watchersList() *tools.ConcurrentSlice[*watcher] {
-	return p.watchers
 }
 
 // Watch a pid for errors, and send on the returned channel if an error occurred
 func (p *pid) Watch(pid PID) {
 	// create a watcher
-	w := &watcher{
+	w := &watchMan{
 		Parent:  p,
 		ErrChan: make(chan error, 1),
 		Done:    make(chan Unit, 1),
 	}
-	// add the watcher to the list of watchers
-	pid.watchersList().Append(w)
+	// add the watcher to the list of watchMen
+	pid.watchers().Append(w)
 	// supervise the PID
 	go p.supervise(pid, w)
 }
 
 // UnWatch stops watching a given actor
 func (p *pid) UnWatch(pid PID) {
-	// iterate the watchers list
-	for item := range pid.watchersList().Iter() {
+	// iterate the watchMen list
+	for item := range pid.watchers().Iter() {
 		// grab the item value
 		w := item.Value
 		// locate the given watcher
-		if w.Parent.Address() == p.Address() {
+		if w.Parent.ActorPath() == p.ActorPath() {
 			// stop the watching go routine
 			w.Done <- Unit{}
 			// remove the watcher from the list
-			pid.watchersList().Delete(item.Index)
+			pid.watchers().Delete(item.Index)
 			break
 		}
 	}
+}
+
+// Watchers return the list of watchMen
+func (p *pid) watchers() *tools.ConcurrentSlice[*watchMan] {
+	return p.watchMen
 }
 
 // doReceive pushes a given message to the actor mailbox
@@ -704,7 +731,7 @@ func (p *pid) reset() {
 	// we just log it for now
 	// TODO decide what to do when we fail to register the metrics or export the metrics registration as public
 	if err := p.registerMetrics(); err != nil {
-		p.logger.Error(errors.Wrapf(err, "failed to register actor=%s metrics", p.Address()))
+		p.logger.Error(errors.Wrapf(err, "failed to register actor=%s metrics", p.ActorPath().String()))
 	}
 }
 
@@ -727,7 +754,7 @@ func (p *pid) freeChildren(ctx context.Context) {
 		}
 		// unwatch the child
 		p.UnWatch(child)
-		p.children.Delete(child.Address())
+		p.children.Delete(child.ActorPath())
 	}
 }
 
@@ -771,7 +798,7 @@ func (p *pid) stop(ctx context.Context) {
 	// signal we are shutting down to stop processing messages
 	p.shutdownSignal <- Unit{}
 	// add some logging
-	p.logger.Infof("Remaining messages in the mailbox have been processed for actor=%s", p.Address())
+	p.logger.Infof("Remaining messages in the mailbox have been processed for actor=%s", p.ActorPath().String())
 	// stop the ticker
 	ticker.Stop()
 }
@@ -855,8 +882,8 @@ func (p *pid) receive() {
 					if r := recover(); r != nil {
 						// construct the error to return
 						err := fmt.Errorf("%s", r)
-						// send the error to the watchers
-						for item := range p.watchers.Iter() {
+						// send the error to the watchMen
+						for item := range p.watchMen.Iter() {
 							item.Value.ErrChan <- err
 						}
 						// increase the panic counter
@@ -873,13 +900,13 @@ func (p *pid) receive() {
 }
 
 // supervise watches for child actor's failure and act based upon the supervisory strategy
-func (p *pid) supervise(cid PID, watcher *watcher) {
+func (p *pid) supervise(cid PID, watcher *watchMan) {
 	for {
 		select {
 		case <-watcher.Done:
 			return
 		case err := <-watcher.ErrChan:
-			p.logger.Errorf("child actor=%s is panicking: Err=%v", cid.Address(), err)
+			p.logger.Errorf("child actor=%s is panicking: Err=%v", cid.ActorPath().String(), err)
 			switch p.supervisorStrategy {
 			case pb.StrategyDirective_STOP_DIRECTIVE:
 				// shutdown the actor and panic in case of error
@@ -889,7 +916,7 @@ func (p *pid) supervise(cid PID, watcher *watcher) {
 				// unwatch the given actor
 				p.UnWatch(cid)
 				// remove the actor from the children map
-				p.children.Delete(cid.Address())
+				p.children.Delete(cid.ActorPath())
 			case pb.StrategyDirective_RESTART_DIRECTIVE:
 				// restart the actor
 				if err := cid.Restart(context.Background()); err != nil {
@@ -903,7 +930,7 @@ func (p *pid) supervise(cid PID, watcher *watcher) {
 				// unwatch the given actor
 				p.UnWatch(cid)
 				// remove the actor from the children map
-				p.children.Delete(cid.Address())
+				p.children.Delete(cid.ActorPath())
 			}
 		}
 	}

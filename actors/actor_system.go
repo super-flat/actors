@@ -29,23 +29,23 @@ type ActorSystem interface {
 	NodeAddr() string
 	// Actors returns the list of Actors that are alive in the actor system
 	Actors() []PID
+	// Host returns the actor system host address
+	Host() string
+	// Port returns the actor system host port
+	Port() int
 	// Start starts the actor system
 	Start(ctx context.Context) error
 	// Stop stops the actor system
 	Stop(ctx context.Context) error
 	// StartActor creates an actor in the system and starts it
-	StartActor(ctx context.Context, kind, id string, actor Actor) PID
+	StartActor(ctx context.Context, name string, actor Actor) PID
 	// StopActor stops a given actor in the system
-	StopActor(ctx context.Context, kind, id string) error
+	StopActor(ctx context.Context, name string) error
 	// RestartActor restarts a given actor in the system
-	RestartActor(ctx context.Context, kind, id string) (PID, error)
+	RestartActor(ctx context.Context, name string) (PID, error)
 	// NumActors returns the total number of active actors in the system
 	NumActors() uint64
-	// Host returns the actor system host address
-	Host() string
-	// Port returns the actor system host port
-	Port() int
-	// internal methods
+
 	// handleSendSync handles a synchronous message to another actor and expect a response.
 	// This block until a response is received or timed out.
 	handleSendSync(ctx context.Context, to PID, message proto.Message) (response proto.Message, err error)
@@ -64,18 +64,17 @@ type actorSystem struct {
 	actors cmp.ConcurrentMap[string, PID]
 	//  specifies the logger to use
 	logger log.Logger
-
-	// actor system configuration
-	config *Config
-
-	hasStarted *atomic.Bool
-
-	// observability settings
-	telemetry *telemetry.Telemetry
 	// specifies the host address
 	host string
 	// specifies the port
 	port int
+	// actor system configuration
+	config *Config
+	// states whether the actor system has started or not
+	hasStarted *atomic.Bool
+
+	// observability settings
+	telemetry *telemetry.Telemetry
 	// specifies the remoting service
 	remotingService grpc.Server
 }
@@ -94,13 +93,16 @@ func NewActorSystem(config *Config) (ActorSystem, error) {
 	// the function only gets called one
 	once.Do(func() {
 		system = &actorSystem{
-			name:       config.Name(),
-			nodeAddr:   config.NodeHostAndPort(),
-			actors:     cmp.New[PID](),
-			logger:     config.Logger(),
-			config:     config,
-			hasStarted: atomic.NewBool(false),
-			telemetry:  config.telemetry,
+			name:            config.Name(),
+			nodeAddr:        config.NodeHostAndPort(),
+			actors:          cmp.New[PID](),
+			logger:          config.Logger(),
+			host:            "",
+			port:            0,
+			config:          config,
+			hasStarted:      atomic.NewBool(false),
+			telemetry:       config.telemetry,
+			remotingService: nil,
 		}
 		// set host and port
 		host, port := config.HostAndPort()
@@ -117,7 +119,7 @@ func (a *actorSystem) NumActors() uint64 {
 }
 
 // StartActor creates or returns the instance of a given actor in the system
-func (a *actorSystem) StartActor(ctx context.Context, kind, id string, actor Actor) PID {
+func (a *actorSystem) StartActor(ctx context.Context, name string, actor Actor) PID {
 	// add a span context
 	ctx, span := telemetry.SpanContext(ctx, "StartActor")
 	defer span.End()
@@ -125,10 +127,10 @@ func (a *actorSystem) StartActor(ctx context.Context, kind, id string, actor Act
 	if !a.hasStarted.Load() {
 		return nil
 	}
-	// create the address of the given actor
-	addr := GetAddress(a, kind, id)
+	// get the path of the given actor
+	actorPath := NewPath(name, NewAddress(protocol, a.name, a.host, a.port))
 	// check whether the given actor already exist in the system or not
-	pid, exist := a.actors.Get(string(addr))
+	pid, exist := a.actors.Get(actorPath.String())
 	// actor already exist no need recreate it.
 	if exist {
 		// check whether the given actor heart beat
@@ -139,25 +141,26 @@ func (a *actorSystem) StartActor(ctx context.Context, kind, id string, actor Act
 	}
 
 	// create an instance of the actor ref
-	pid = newPID(ctx, actor,
+	pid = newPID(ctx,
+		actorPath,
+		actor,
 		withInitMaxRetries(a.config.ActorInitMaxRetries()),
 		withPassivationAfter(a.config.ExpireActorAfter()),
 		withSendReplyTimeout(a.config.ReplyTimeout()),
 		withCustomLogger(a.config.logger),
 		withActorSystem(a),
-		withLocalID(kind, id),
 		withSupervisorStrategy(a.config.supervisorStrategy),
-		withTelemetry(a.config.telemetry),
-		withAddress(addr))
+		withTelemetry(a.config.telemetry))
 
 	// add the given actor to the actor map
-	a.actors.Set(string(addr), pid)
+	a.actors.Set(actorPath.String(), pid)
+
 	// return the actor ref
 	return pid
 }
 
 // StopActor stops a given actor in the system
-func (a *actorSystem) StopActor(ctx context.Context, kind, id string) error {
+func (a *actorSystem) StopActor(ctx context.Context, name string) error {
 	// add a span context
 	ctx, span := telemetry.SpanContext(ctx, "StopActor")
 	defer span.End()
@@ -165,20 +168,20 @@ func (a *actorSystem) StopActor(ctx context.Context, kind, id string) error {
 	if !a.hasStarted.Load() {
 		return errors.New("actor system has not started yet")
 	}
-	// create the address of the given actor
-	addr := GetAddress(a, kind, id)
+	// get the path of the given actor
+	actorPath := NewPath(name, NewAddress(protocol, a.name, a.host, a.port))
 	// check whether the given actor already exist in the system or not
-	pid, exist := a.actors.Get(string(addr))
+	pid, exist := a.actors.Get(actorPath.String())
 	// actor is found.
 	if exist {
 		// stop the given actor
 		return pid.Shutdown(ctx)
 	}
-	return fmt.Errorf("actor=%s not found in the system", addr)
+	return fmt.Errorf("actor=%s not found in the system", actorPath.String())
 }
 
 // RestartActor restarts a given actor in the system
-func (a *actorSystem) RestartActor(ctx context.Context, kind, id string) (PID, error) {
+func (a *actorSystem) RestartActor(ctx context.Context, name string) (PID, error) {
 	// add a span context
 	ctx, span := telemetry.SpanContext(ctx, "RestartActor")
 	defer span.End()
@@ -186,20 +189,20 @@ func (a *actorSystem) RestartActor(ctx context.Context, kind, id string) (PID, e
 	if !a.hasStarted.Load() {
 		return nil, errors.New("actor system has not started yet")
 	}
-	// create the address of the given actor
-	addr := GetAddress(a, kind, id)
+	// get the path of the given actor
+	actorPath := NewPath(name, NewAddress(protocol, a.name, a.host, a.port))
 	// check whether the given actor already exist in the system or not
-	pid, exist := a.actors.Get(string(addr))
+	pid, exist := a.actors.Get(actorPath.String())
 	// actor is found.
 	if exist {
 		// restart the given actor
 		if err := pid.Restart(ctx); err != nil {
 			// return the error in case the restart failed
-			return nil, errors.Wrapf(err, "failed to restart actor=%s", addr)
+			return nil, errors.Wrapf(err, "failed to restart actor=%s", actorPath.String())
 		}
 		return pid, nil
 	}
-	return nil, fmt.Errorf("actor=%s not found in the system", addr)
+	return nil, fmt.Errorf("actor=%s not found in the system", actorPath.String())
 }
 
 // Name returns the actor system name
@@ -254,7 +257,7 @@ func (a *actorSystem) Start(ctx context.Context) error {
 	if err := a.registerMetrics(); err != nil {
 		a.logger.Error(errors.Wrapf(err, "failed to register actorSystem=%s metrics", a.name))
 	}
-	a.logger.Infof("%s System started on Node=%s...", a.name, a.nodeAddr)
+	a.logger.Infof("%s ActorSystem started on Node=%s...", a.name, a.nodeAddr)
 	return nil
 }
 
@@ -263,7 +266,7 @@ func (a *actorSystem) Stop(ctx context.Context) error {
 	// add a span context
 	ctx, span := telemetry.SpanContext(ctx, "Stop")
 	defer span.End()
-	a.logger.Infof("%s System is shutting down on Node=%s...", a.name, a.nodeAddr)
+	a.logger.Infof("%s ActorSystem is shutting down on Node=%s...", a.name, a.nodeAddr)
 
 	// stop remoting service when set
 	if a.remotingService != nil {
@@ -281,7 +284,7 @@ func (a *actorSystem) Stop(ctx context.Context) error {
 		if err := actor.Shutdown(ctx); err != nil {
 			return err
 		}
-		a.actors.Remove(string(actor.Address()))
+		a.actors.Remove(actor.ActorPath().String())
 	}
 
 	// reset the actor system
@@ -309,7 +312,7 @@ func (a *actorSystem) RemoteLookup(ctx context.Context, request *pb.RemoteLookup
 
 	// check whether the actor system is set and validate it
 	// if the actor system is not set we just use the current actor system name to perform the lookup
-	sys := reqCopy.GetAddress().GetActorSystem()
+	sys := reqCopy.GetActorSystem()
 	if sys != a.name {
 		// log the error
 		logger.Error(ErrRemoteSendInvalidActorSystem)
@@ -318,7 +321,7 @@ func (a *actorSystem) RemoteLookup(ctx context.Context, request *pb.RemoteLookup
 	}
 
 	// let us validate the host and port
-	hostAndPort := fmt.Sprintf("%s:%d", reqCopy.GetAddress().GetHost(), reqCopy.GetAddress().GetPort())
+	hostAndPort := fmt.Sprintf("%s:%d", reqCopy.GetHost(), reqCopy.GetPort())
 	if hostAndPort != a.nodeAddr {
 		// log the error
 		logger.Error(ErrRemoteSendInvalidNode)
@@ -327,20 +330,28 @@ func (a *actorSystem) RemoteLookup(ctx context.Context, request *pb.RemoteLookup
 	}
 
 	// construct the actor address
-	kind := reqCopy.GetAddress().GetKind()
-	id := reqCopy.GetAddress().GetId()
-	addr := GetAddress(a, kind, id)
+	name := reqCopy.GetName()
+	actorPath := NewPath(name, NewAddress(protocol, sys, reqCopy.GetHost(), int(reqCopy.GetPort())))
 	// start or get the PID of the actor
 	// check whether the given actor already exist in the system or not
-	_, exist := a.actors.Get(string(addr))
+	pid, exist := a.actors.Get(actorPath.String())
 	// return an error when the remote address is not found
 	if !exist {
 		// log the error
-		logger.Error(ErrRemoteActorNotFound(string(addr)))
-		return nil, ErrRemoteActorNotFound(string(addr))
+		logger.Error(ErrRemoteActorNotFound(actorPath.String()))
+		return nil, ErrRemoteActorNotFound(actorPath.String())
 	}
 
-	return &pb.RemoteLookupResponse{}, nil
+	// let us construct the address
+	addr := &pb.Address{
+		ActorSystem: pid.ActorPath().Address().System(),
+		Host:        pid.ActorPath().Address().Host(),
+		Port:        int32(pid.ActorPath().Address().Port()),
+		Name:        pid.ActorPath().Name(),
+		Id:          pid.ActorPath().ID().String(),
+	}
+
+	return &pb.RemoteLookupResponse{Address: addr}, nil
 }
 
 // RemoteSendSync handles a message to an actor remotely with a reply expected from the receiving actor
@@ -374,17 +385,16 @@ func (a *actorSystem) RemoteSendSync(ctx context.Context, request *pb.RemoteSend
 	}
 
 	// construct the actor address
-	kind := reqCopy.GetReceiver().GetKind()
-	id := reqCopy.GetReceiver().GetId()
-	addr := GetAddress(a, kind, id)
+	name := reqCopy.GetReceiver().GetName()
+	actorPath := NewPath(name, NewAddress(protocol, a.name, a.host, a.port))
 	// start or get the PID of the actor
 	// check whether the given actor already exist in the system or not
-	pid, exist := a.actors.Get(string(addr))
+	pid, exist := a.actors.Get(string(actorPath.String()))
 	// return an error when the remote address is not found
 	if !exist {
 		// log the error
-		logger.Error(ErrRemoteActorNotFound(string(addr)))
-		return nil, ErrRemoteActorNotFound(string(addr))
+		logger.Error(ErrRemoteActorNotFound(actorPath.String()))
+		return nil, ErrRemoteActorNotFound(actorPath.String())
 	}
 	// restart the actor when it is not live
 	if !pid.IsOnline() {
@@ -436,17 +446,21 @@ func (a *actorSystem) RemoteSendAsync(ctx context.Context, request *pb.RemoteSen
 	}
 
 	// construct the actor address
-	kind := reqCopy.GetAddress().GetKind()
-	id := reqCopy.GetAddress().GetId()
-	addr := GetAddress(a, kind, id)
+	actorPath := NewPath(
+		reqCopy.GetAddress().GetName(),
+		NewAddress(
+			protocol,
+			reqCopy.GetAddress().GetActorSystem(),
+			reqCopy.GetAddress().GetHost(),
+			int(reqCopy.GetAddress().GetPort())))
 	// start or get the PID of the actor
 	// check whether the given actor already exist in the system or not
-	pid, exist := a.actors.Get(string(addr))
+	pid, exist := a.actors.Get(actorPath.String())
 	// return an error when the remote address is not found
 	if !exist {
 		// log the error
-		logger.Error(ErrRemoteActorNotFound(string(addr)))
-		return nil, ErrRemoteActorNotFound(string(addr))
+		logger.Error(ErrRemoteActorNotFound(actorPath.String()))
+		return nil, ErrRemoteActorNotFound(actorPath.String())
 	}
 	// restart the actor when it is not live
 	if !pid.IsOnline() {
@@ -547,6 +561,5 @@ func (a *actorSystem) reset() {
 	a.host = ""
 	a.port = -1
 	a.logger = nil
-	// reset the sync
 	once.Reset()
 }
