@@ -492,18 +492,11 @@ func (p *pid) RemoteLookup(ctx context.Context, host string, port int, name stri
 	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", host, port))
 	remoteClient := pb.NewRemotingServiceClient(rpcConn)
 
-	// set the actor system to the PID
-	sys := p.ActorSystem().Name()
-	if actorSystem != nil {
-		sys = *actorSystem
-	}
-
 	// prepare the request to send
 	request := &pb.RemoteLookupRequest{
-		ActorSystem: sys,
-		Host:        host,
-		Port:        int32(port),
-		Name:        name,
+		Host: host,
+		Port: int32(port),
+		Name: name,
 	}
 	// send the message and handle the error in case there is any
 	response, err := remoteClient.RemoteLookup(ctx, request)
@@ -562,11 +555,10 @@ func (p *pid) RemoteSendSync(ctx context.Context, to *pb.Address, message proto.
 
 	// construct the from address
 	from := &pb.Address{
-		ActorSystem: p.ActorPath().Address().System(),
-		Host:        p.ActorPath().Address().Host(),
-		Port:        int32(p.ActorPath().Address().Port()),
-		Name:        p.ActorPath().Name(),
-		Id:          p.ActorPath().ID().String(),
+		Host: p.ActorPath().Address().Host(),
+		Port: int32(p.ActorPath().Address().Port()),
+		Name: p.ActorPath().Name(),
+		Id:   p.ActorPath().ID().String(),
 	}
 
 	// create an instance of remote client service
