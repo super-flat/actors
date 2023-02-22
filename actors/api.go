@@ -2,10 +2,17 @@ package actors
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	pb "github.com/super-flat/actors/pb/actors/v1"
+	"github.com/super-flat/actors/pkg/grpc"
+	"github.com/super-flat/actors/telemetry"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // SendSync sends a synchronous message to another actor and expect a response.
@@ -98,4 +105,96 @@ func SendAsync(ctx context.Context, to PID, message proto.Message) error {
 	to.doReceive(context)
 
 	return nil
+}
+
+// RemoteSendAsync sends a message to an actor remotely without expecting any reply
+func RemoteSendAsync(ctx context.Context, to *pb.Address, message proto.Message) error {
+	// add a span context
+	ctx, span := telemetry.SpanContext(ctx, "RemoteTell")
+	defer span.End()
+
+	// marshal the message
+	marshaled, err := anypb.New(message)
+	if err != nil {
+		return err
+	}
+
+	// create an instance of remote client service
+	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", to.GetHost(), to.GetPort()))
+	remoteClient := pb.NewRemotingServiceClient(rpcConn)
+	// prepare the rpcRequest to send
+	request := &pb.RemoteTellRequest{
+		RemoteMessage: &pb.RemoteMessage{
+			Sender:   RemoteNoSender,
+			Receiver: to,
+			Message:  marshaled,
+		},
+	}
+	// send the message and handle the error in case there is any
+	if _, err := remoteClient.RemoteTell(ctx, request); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RemoteSendSync sends a synchronous message to another actor remotely and expect a response.
+func RemoteSendSync(ctx context.Context, to *pb.Address, message proto.Message) (response proto.Message, err error) {
+	// add a span context
+	ctx, span := telemetry.SpanContext(ctx, "RemoteTell")
+	defer span.End()
+
+	// marshal the message
+	marshaled, err := anypb.New(message)
+	if err != nil {
+		return nil, err
+	}
+
+	// create an instance of remote client service
+	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", to.GetHost(), to.GetPort()))
+	remoteClient := pb.NewRemotingServiceClient(rpcConn)
+	// prepare the rpcRequest to send
+	rpcRequest := &pb.RemoteAskRequest{
+		Receiver: to,
+		Message:  marshaled,
+	}
+	// send the request
+	rpcResponse, rpcErr := remoteClient.RemoteAsk(ctx, rpcRequest)
+	// handle the error
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	return rpcResponse.GetMessage(), nil
+}
+
+// RemoteLookup look for an actor address on a remote node.
+func RemoteLookup(ctx context.Context, host string, port int, name string) (addr *pb.Address, err error) {
+	// add a span context
+	ctx, span := telemetry.SpanContext(ctx, "RemoteLookup")
+	defer span.End()
+
+	// create an instance of remote client service
+	rpcConn, _ := grpc.GetClientConn(ctx, fmt.Sprintf("%s:%d", host, port))
+	remoteClient := pb.NewRemotingServiceClient(rpcConn)
+
+	// prepare the request to send
+	request := &pb.RemoteLookupRequest{
+		Host: host,
+		Port: int32(port),
+		Name: name,
+	}
+	// send the message and handle the error in case there is any
+	response, err := remoteClient.RemoteLookup(ctx, request)
+	// we know the error will always be a grpc error
+	if err != nil {
+		// get the status error
+		s := status.Convert(err)
+		if s.Code() == codes.NotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// return the response
+	return response.GetAddress(), nil
 }
