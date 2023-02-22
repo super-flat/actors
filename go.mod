@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/cenkalti/backoff v2.2.1+incompatible
+	github.com/google/go-cmp v0.5.9
 	github.com/google/uuid v1.3.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/orcaman/concurrent-map/v2 v2.0.1
