@@ -22,10 +22,10 @@ func (m *pidMap) Len() int {
 }
 
 // Get retrieves a pid by its address
-func (m *pidMap) Get(path string) (pid PID, ok bool) {
+func (m *pidMap) Get(path *Path) (pid PID, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pid, ok = m.pids[path]
+	pid, ok = m.pids[path.String()]
 	return
 }
 
