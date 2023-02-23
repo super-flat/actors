@@ -6,9 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"github.com/cenkalti/backoff"
 	"github.com/pkg/errors"
 	"github.com/super-flat/actors/log"
@@ -18,6 +15,8 @@ import (
 	"github.com/super-flat/actors/telemetry"
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
